@@ -82,21 +82,30 @@ type ToolResult struct {
 
 // ToolExecutor manages and executes tools
 type ToolExecutor struct {
-	tools   map[string]*ToolDefinition
-	schemas map[string]*gojsonschema.Schema
-	mu      sync.RWMutex
+	tools          map[string]*ToolDefinition
+	schemas        map[string]*gojsonschema.Schema
+	sandboxManager *SandboxManager
+	mu             sync.RWMutex
 }
 
 // New creates a new ToolExecutor
 func New() *ToolExecutor {
 	te := &ToolExecutor{
-		tools:   make(map[string]*ToolDefinition),
-		schemas: make(map[string]*gojsonschema.Schema),
+		tools:          make(map[string]*ToolDefinition),
+		schemas:        make(map[string]*gojsonschema.Schema),
+		sandboxManager: nil, // Sandbox is optional
 	}
 
 	log.Info().Msg("Tool executor initialized")
 
 	return te
+}
+
+// SetSandboxManager sets the sandbox manager for the tool executor
+func (te *ToolExecutor) SetSandboxManager(manager *SandboxManager) {
+	te.mu.Lock()
+	defer te.mu.Unlock()
+	te.sandboxManager = manager
 }
 
 // RegisterTool registers a new tool
@@ -182,6 +191,20 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 					"agent_id":         execCtx.AgentID,
 				},
 			}
+		}
+	}
+
+	// Check if sandbox is enabled
+	te.mu.RLock()
+	sandboxManager := te.sandboxManager
+	te.mu.RUnlock()
+
+	if sandboxManager != nil && execCtx != nil && execCtx.SandboxPolicy != nil {
+		// Check if sandboxing is enabled
+		mode, ok := execCtx.SandboxPolicy["mode"].(string)
+		if ok && mode != "off" {
+			// Use sandbox for execution
+			return ExecuteWithSandbox(ctx, te, sandboxManager, toolName, params, execCtx)
 		}
 	}
 
