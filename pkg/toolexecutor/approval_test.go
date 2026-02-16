@@ -182,3 +182,38 @@ func TestMockApprovalHandler_ContextCancellation(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
 }
+
+// MockApprovalHandler is a mock implementation of ApprovalHandler for testing
+type MockApprovalHandler struct {
+	Response    ApprovalResponse
+	Error       error
+	Delay       time.Duration
+	AutoApprove bool
+}
+
+func (m *MockApprovalHandler) RequestApproval(ctx context.Context, req ApprovalRequest) (ApprovalResponse, error) {
+	// Simulate delay if specified
+	if m.Delay > 0 {
+		select {
+		case <-time.After(m.Delay):
+		case <-ctx.Done():
+			return ApprovalResponse{}, ctx.Err()
+		}
+	}
+
+	// Return error if specified
+	if m.Error != nil {
+		return ApprovalResponse{}, m.Error
+	}
+
+	// Auto-approve if enabled
+	if m.AutoApprove {
+		return ApprovalResponse{
+			Approved: true,
+			Reason:   "auto-approved",
+		}, nil
+	}
+
+	// Return configured response
+	return m.Response, nil
+}

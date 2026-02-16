@@ -126,39 +126,3 @@ func (am *ApprovalManager) GetDefaultTimeout() time.Duration {
 func (am *ApprovalManager) SetHandler(handler ApprovalHandler) {
 	am.handler = handler
 }
-
-// MockApprovalHandler is a mock handler for testing
-type MockApprovalHandler struct {
-	AutoApprove bool
-	Response    ApprovalResponse
-	Delay       time.Duration
-	Error       error
-}
-
-// RequestApproval implements ApprovalHandler
-func (m *MockApprovalHandler) RequestApproval(ctx context.Context, req ApprovalRequest) (ApprovalResponse, error) {
-	// Simulate delay
-	if m.Delay > 0 {
-		select {
-		case <-time.After(m.Delay):
-		case <-ctx.Done():
-			return ApprovalResponse{}, ctx.Err()
-		}
-	}
-
-	// Return error if configured
-	if m.Error != nil {
-		return ApprovalResponse{}, m.Error
-	}
-
-	// Auto-approve if configured
-	if m.AutoApprove {
-		return ApprovalResponse{
-			Approved: true,
-			Reason:   "auto-approved",
-		}, nil
-	}
-
-	// Return configured response
-	return m.Response, nil
-}
