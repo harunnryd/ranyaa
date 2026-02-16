@@ -1,0 +1,134 @@
+package daemon
+
+import (
+	"testing"
+	"time"
+
+	"github.com/harun/ranya/internal/config"
+	"github.com/harun/ranya/internal/logger"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNew(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tmpDir
+	cfg.AnthropicAPIKey = "sk-test-key"
+
+	logCfg := logger.Config{
+		Level:   "info",
+		Console: false,
+	}
+	log, err := logger.New(logCfg)
+	require.NoError(t, err)
+	defer log.Close()
+
+	daemon, err := New(cfg, log)
+	require.NoError(t, err)
+	assert.NotNil(t, daemon)
+	assert.NotNil(t, daemon.queue)
+	assert.NotNil(t, daemon.sessionMgr)
+	assert.NotNil(t, daemon.eventLoop)
+	assert.NotNil(t, daemon.router)
+	assert.NotNil(t, daemon.lifecycle)
+}
+
+func TestDaemonStartStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tmpDir
+	cfg.AnthropicAPIKey = "sk-test-key"
+
+	logCfg := logger.Config{
+		Level:   "info",
+		Console: false,
+	}
+	log, err := logger.New(logCfg)
+	require.NoError(t, err)
+	defer log.Close()
+
+	daemon, err := New(cfg, log)
+	require.NoError(t, err)
+
+	// Start daemon
+	err = daemon.Start()
+	require.NoError(t, err)
+
+	// Check status
+	status := daemon.Status()
+	assert.True(t, status.Running)
+
+	// Wait a bit
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop daemon
+	err = daemon.Stop()
+	require.NoError(t, err)
+
+	// Check status
+	status = daemon.Status()
+	assert.False(t, status.Running)
+}
+
+func TestDaemonStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tmpDir
+	cfg.AnthropicAPIKey = "sk-test-key"
+
+	logCfg := logger.Config{
+		Level:   "info",
+		Console: false,
+	}
+	log, err := logger.New(logCfg)
+	require.NoError(t, err)
+	defer log.Close()
+
+	daemon, err := New(cfg, log)
+	require.NoError(t, err)
+
+	// Status before start
+	status := daemon.Status()
+	assert.False(t, status.Running)
+	assert.Equal(t, time.Duration(0), status.Uptime)
+
+	// Start daemon
+	err = daemon.Start()
+	require.NoError(t, err)
+	defer daemon.Stop()
+
+	// Status after start
+	time.Sleep(100 * time.Millisecond)
+	status = daemon.Status()
+	assert.True(t, status.Running)
+	assert.Greater(t, status.Uptime, time.Duration(0))
+}
+
+func TestDaemonGetters(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tmpDir
+	cfg.AnthropicAPIKey = "sk-test-key"
+
+	logCfg := logger.Config{
+		Level:   "info",
+		Console: false,
+	}
+	log, err := logger.New(logCfg)
+	require.NoError(t, err)
+	defer log.Close()
+
+	daemon, err := New(cfg, log)
+	require.NoError(t, err)
+
+	assert.NotNil(t, daemon.GetConfig())
+	assert.NotNil(t, daemon.GetLogger())
+	assert.NotNil(t, daemon.GetQueue())
+	assert.NotNil(t, daemon.GetSessionManager())
+	assert.NotNil(t, daemon.GetRouter())
+}
