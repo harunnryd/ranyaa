@@ -57,7 +57,7 @@ func NewServer(options ServerOptions, commandQueue *commandqueue.CommandQueue, a
 		if err != nil {
 			return nil, fmt.Errorf("failed to get home directory: %w", err)
 		}
-		options.RegistryPath = filepath.Join(homeDir, ".openclaw", "webhooks", "registry.json")
+		options.RegistryPath = filepath.Join(homeDir, ".ranya", "webhooks", "registry.json")
 	}
 
 	if commandQueue == nil {
