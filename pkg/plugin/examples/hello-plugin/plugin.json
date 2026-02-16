@@ -1,0 +1,19 @@
+{
+    "id": "hello-plugin",
+    "name": "Hello Plugin",
+    "version": "1.0.0",
+    "description": "A simple example plugin that demonstrates the plugin system",
+    "author": "Ranya Team",
+    "main": "hello-plugin",
+    "permissions": [
+        "filesystem:read"
+    ],
+    "exports": {
+        "tools": [
+            "hello"
+        ],
+        "hooks": [
+            "startup"
+        ]
+    }
+}
