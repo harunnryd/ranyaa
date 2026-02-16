@@ -10,12 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
+// createTestDaemon creates a daemon for testing with Telegram disabled
+func createTestDaemon(t *testing.T) (*Daemon, *logger.Logger) {
 	tmpDir := t.TempDir()
 
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
 	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.Channels.Telegram.Enabled = false // Disable Telegram for tests
 
 	logCfg := logger.Config{
 		Level:   "info",
@@ -23,10 +25,17 @@ func TestNew(t *testing.T) {
 	}
 	log, err := logger.New(logCfg)
 	require.NoError(t, err)
-	defer log.Close()
 
 	daemon, err := New(cfg, log)
 	require.NoError(t, err)
+
+	return daemon, log
+}
+
+func TestNew(t *testing.T) {
+	daemon, log := createTestDaemon(t)
+	defer log.Close()
+
 	assert.NotNil(t, daemon)
 	assert.NotNil(t, daemon.queue)
 	assert.NotNil(t, daemon.sessionMgr)
@@ -36,25 +45,11 @@ func TestNew(t *testing.T) {
 }
 
 func TestDaemonStartStop(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := config.DefaultConfig()
-	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
-
-	logCfg := logger.Config{
-		Level:   "info",
-		Console: false,
-	}
-	log, err := logger.New(logCfg)
-	require.NoError(t, err)
+	daemon, log := createTestDaemon(t)
 	defer log.Close()
 
-	daemon, err := New(cfg, log)
-	require.NoError(t, err)
-
 	// Start daemon
-	err = daemon.Start()
+	err := daemon.Start()
 	require.NoError(t, err)
 
 	// Check status
@@ -74,22 +69,8 @@ func TestDaemonStartStop(t *testing.T) {
 }
 
 func TestDaemonStatus(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := config.DefaultConfig()
-	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
-
-	logCfg := logger.Config{
-		Level:   "info",
-		Console: false,
-	}
-	log, err := logger.New(logCfg)
-	require.NoError(t, err)
+	daemon, log := createTestDaemon(t)
 	defer log.Close()
-
-	daemon, err := New(cfg, log)
-	require.NoError(t, err)
 
 	// Status before start
 	status := daemon.Status()
@@ -97,7 +78,7 @@ func TestDaemonStatus(t *testing.T) {
 	assert.Equal(t, time.Duration(0), status.Uptime)
 
 	// Start daemon
-	err = daemon.Start()
+	err := daemon.Start()
 	require.NoError(t, err)
 	defer daemon.Stop()
 
@@ -109,22 +90,8 @@ func TestDaemonStatus(t *testing.T) {
 }
 
 func TestDaemonGetters(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := config.DefaultConfig()
-	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
-
-	logCfg := logger.Config{
-		Level:   "info",
-		Console: false,
-	}
-	log, err := logger.New(logCfg)
-	require.NoError(t, err)
+	daemon, log := createTestDaemon(t)
 	defer log.Close()
-
-	daemon, err := New(cfg, log)
-	require.NoError(t, err)
 
 	assert.NotNil(t, daemon.GetConfig())
 	assert.NotNil(t, daemon.GetLogger())

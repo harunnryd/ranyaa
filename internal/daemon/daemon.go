@@ -11,19 +11,23 @@ import (
 
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/logger"
+	"github.com/harun/ranya/internal/telegram"
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/session"
 )
 
 // Daemon represents the Ranya daemon service
 type Daemon struct {
-	config     *config.Config
-	logger     *logger.Logger
-	queue      *commandqueue.CommandQueue
-	sessionMgr *session.SessionManager
-	eventLoop  *EventLoop
-	router     *Router
-	lifecycle  *LifecycleManager
+	config      *config.Config
+	logger      *logger.Logger
+	queue       *commandqueue.CommandQueue
+	sessionMgr  *session.SessionManager
+	telegramBot *telegram.Bot
+	archiver    *session.Archiver
+	cleanup     *session.Cleanup
+	eventLoop   *EventLoop
+	router      *Router
+	lifecycle   *LifecycleManager
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -57,6 +61,22 @@ func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 		cancel:     cancel,
 	}
 
+	// Create Telegram bot if enabled
+	if cfg.Channels.Telegram.Enabled {
+		bot, err := telegram.New(&cfg.Telegram, log)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+		}
+		d.telegramBot = bot
+	}
+
+	// Create session archiver
+	d.archiver = session.NewArchiver(sessionMgr, 30*time.Minute)
+
+	// Create session cleanup
+	d.cleanup = session.NewCleanup(sessionMgr, 7*24*time.Hour)
+
 	// Create event loop
 	d.eventLoop = NewEventLoop(d)
 
@@ -87,6 +107,24 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("failed to start lifecycle manager: %w", err)
 	}
 
+	// Start Telegram bot if enabled
+	if d.telegramBot != nil {
+		if err := d.telegramBot.Start(); err != nil {
+			return fmt.Errorf("failed to start telegram bot: %w", err)
+		}
+		d.logger.Info().Msg("Telegram bot started")
+	}
+
+	// Start session archiver
+	if err := d.archiver.Start(); err != nil {
+		d.logger.Warn().Err(err).Msg("Failed to start session archiver")
+	}
+
+	// Start session cleanup
+	if err := d.cleanup.Start(); err != nil {
+		d.logger.Warn().Err(err).Msg("Failed to start session cleanup")
+	}
+
 	// Start event loop
 	d.wg.Add(1)
 	go func() {
@@ -110,6 +148,27 @@ func (d *Daemon) Stop() error {
 	d.mu.Unlock()
 
 	d.logger.Info().Msg("Stopping Ranya daemon")
+
+	// Stop Telegram bot
+	if d.telegramBot != nil {
+		if err := d.telegramBot.Stop(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to stop telegram bot")
+		}
+	}
+
+	// Stop session archiver
+	if d.archiver != nil && d.archiver.IsRunning() {
+		if err := d.archiver.Stop(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to stop session archiver")
+		}
+	}
+
+	// Stop session cleanup
+	if d.cleanup != nil && d.cleanup.IsRunning() {
+		if err := d.cleanup.Stop(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to stop session cleanup")
+		}
+	}
 
 	// Cancel context
 	d.cancel()
@@ -206,4 +265,19 @@ type Status struct {
 	Running   bool
 	Uptime    time.Duration
 	StartTime time.Time
+}
+
+// GetTelegramBot returns the Telegram bot
+func (d *Daemon) GetTelegramBot() *telegram.Bot {
+	return d.telegramBot
+}
+
+// GetArchiver returns the session archiver
+func (d *Daemon) GetArchiver() *session.Archiver {
+	return d.archiver
+}
+
+// GetCleanup returns the session cleanup
+func (d *Daemon) GetCleanup() *session.Cleanup {
+	return d.cleanup
 }

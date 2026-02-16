@@ -16,6 +16,7 @@ func TestNewRouter(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
 	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.Channels.Telegram.Enabled = false
 
 	logCfg := logger.Config{
 		Level:   "info",
@@ -39,6 +40,7 @@ func TestRouteMessage(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
 	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.Channels.Telegram.Enabled = false
 
 	logCfg := logger.Config{
 		Level:   "info",

@@ -17,6 +17,7 @@ func TestNewEventLoop(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
 	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.Channels.Telegram.Enabled = false
 
 	logCfg := logger.Config{
 		Level:   "info",
@@ -40,6 +41,7 @@ func TestEventLoopRun(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
 	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.Channels.Telegram.Enabled = false
 
 	logCfg := logger.Config{
 		Level:   "info",
@@ -79,6 +81,7 @@ func TestEventLoopHandleShutdown(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
 	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.Channels.Telegram.Enabled = false
 
 	logCfg := logger.Config{
 		Level:   "info",
