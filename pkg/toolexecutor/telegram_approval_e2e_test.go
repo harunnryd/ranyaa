@@ -15,7 +15,8 @@ import (
 func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 	// Scenario 1: Complete approval workflow with approve
 	t.Run("complete workflow - approve", func(t *testing.T) {
-		handler := NewTelegramApprovalHandler(nil, 123456)
+		mockAPI := &MockBotAPI{}
+		handler := NewTelegramApprovalHandler(mockAPI, 123456)
 		manager := NewApprovalManager(handler)
 
 		// Start approval request in background
@@ -81,7 +82,8 @@ func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 
 	// Scenario 2: Complete approval workflow with deny
 	t.Run("complete workflow - deny", func(t *testing.T) {
-		handler := NewTelegramApprovalHandler(nil, 123456)
+		mockAPI := &MockBotAPI{}
+		handler := NewTelegramApprovalHandler(mockAPI, 123456)
 		manager := NewApprovalManager(handler)
 
 		req := ApprovalRequest{
@@ -141,7 +143,8 @@ func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 
 	// Scenario 3: Timeout scenario
 	t.Run("complete workflow - timeout", func(t *testing.T) {
-		handler := NewTelegramApprovalHandler(nil, 123456)
+		mockAPI := &MockBotAPI{}
+		handler := NewTelegramApprovalHandler(mockAPI, 123456)
 		manager := NewApprovalManager(handler)
 		manager.SetDefaultTimeout(200 * time.Millisecond)
 
@@ -160,7 +163,8 @@ func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 
 	// Scenario 4: Multiple concurrent approvals
 	t.Run("multiple concurrent approvals", func(t *testing.T) {
-		handler := NewTelegramApprovalHandler(nil, 123456)
+		mockAPI := &MockBotAPI{}
+		handler := NewTelegramApprovalHandler(mockAPI, 123456)
 		manager := NewApprovalManager(handler)
 
 		numRequests := 5

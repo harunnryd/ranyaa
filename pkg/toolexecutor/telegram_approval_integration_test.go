@@ -10,8 +10,9 @@ import (
 )
 
 func TestTelegramApprovalHandler_Integration_ApprovalWorkflow(t *testing.T) {
-	// Create handler with nil API (for testing)
-	handler := NewTelegramApprovalHandler(nil, 123456)
+	// Create handler with mock API
+	mockAPI := &MockBotAPI{}
+	handler := NewTelegramApprovalHandler(mockAPI, 123456)
 
 	// Test 1: Register pending approval and handle callback
 	callbackID := "approval_test_123"
@@ -41,7 +42,8 @@ func TestTelegramApprovalHandler_Integration_ApprovalWorkflow(t *testing.T) {
 }
 
 func TestTelegramApprovalHandler_Integration_MultipleApprovals(t *testing.T) {
-	handler := NewTelegramApprovalHandler(nil, 123456)
+	mockAPI := &MockBotAPI{}
+	handler := NewTelegramApprovalHandler(mockAPI, 123456)
 
 	// Create multiple pending approvals
 	approvals := []struct {
@@ -81,7 +83,8 @@ func TestTelegramApprovalHandler_Integration_MultipleApprovals(t *testing.T) {
 }
 
 func TestTelegramApprovalHandler_Integration_ConcurrentCallbacks(t *testing.T) {
-	handler := NewTelegramApprovalHandler(nil, 123456)
+	mockAPI := &MockBotAPI{}
+	handler := NewTelegramApprovalHandler(mockAPI, 123456)
 
 	// Create multiple pending approvals
 	numApprovals := 10

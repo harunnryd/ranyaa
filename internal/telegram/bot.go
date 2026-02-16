@@ -221,7 +221,7 @@ func (b *Bot) SetMediaHandler(handler MediaHandler) {
 	b.mediaHandler = handler
 }
 
-// GetAPI returns the underlying bot API (for testing)
+// GetAPI returns the underlying bot API
 func (b *Bot) GetAPI() *tgbotapi.BotAPI {
 	return b.api
 }

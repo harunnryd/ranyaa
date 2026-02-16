@@ -37,7 +37,7 @@ func init() {
 `)
 }
 
-// GetRootCmd returns the root command for testing
+// GetRootCmd returns the root command
 func GetRootCmd() *cobra.Command {
 	return rootCmd
 }

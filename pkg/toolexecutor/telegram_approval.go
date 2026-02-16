@@ -10,9 +10,15 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// TelegramAPI is an interface for Telegram Bot API operations
+type TelegramAPI interface {
+	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
+}
+
 // TelegramApprovalHandler handles approval requests via Telegram inline buttons
 type TelegramApprovalHandler struct {
-	api    *tgbotapi.BotAPI
+	api    TelegramAPI
 	chatID int64
 
 	// Pending approvals
@@ -21,7 +27,7 @@ type TelegramApprovalHandler struct {
 }
 
 // NewTelegramApprovalHandler creates a new Telegram approval handler
-func NewTelegramApprovalHandler(api *tgbotapi.BotAPI, chatID int64) *TelegramApprovalHandler {
+func NewTelegramApprovalHandler(api TelegramAPI, chatID int64) *TelegramApprovalHandler {
 	return &TelegramApprovalHandler{
 		api:              api,
 		chatID:           chatID,
@@ -31,9 +37,8 @@ func NewTelegramApprovalHandler(api *tgbotapi.BotAPI, chatID int64) *TelegramApp
 
 // RequestApproval sends an approval request to Telegram with inline buttons
 func (t *TelegramApprovalHandler) RequestApproval(ctx context.Context, req ApprovalRequest) (ApprovalResponse, error) {
-	// Skip sending message if API is nil (for testing)
 	if t.api == nil {
-		return t.requestApprovalWithoutSending(ctx, req)
+		return ApprovalResponse{}, fmt.Errorf("telegram API is not initialized")
 	}
 
 	// Generate unique callback ID
@@ -91,39 +96,6 @@ func (t *TelegramApprovalHandler) RequestApproval(ctx context.Context, req Appro
 	case <-ctx.Done():
 		// Update message to show timeout
 		t.updateMessageWithTimeout(sentMsg.MessageID, req)
-		return ApprovalResponse{
-			Approved: false,
-			Reason:   "timeout",
-		}, ctx.Err()
-	}
-}
-
-// requestApprovalWithoutSending is used for testing when API is nil
-func (t *TelegramApprovalHandler) requestApprovalWithoutSending(ctx context.Context, req ApprovalRequest) (ApprovalResponse, error) {
-	// Generate unique callback ID
-	callbackID := fmt.Sprintf("approval_%d", time.Now().UnixNano())
-
-	// Create response channel
-	responseChan := make(chan ApprovalResponse, 1)
-
-	// Register pending approval
-	t.mu.Lock()
-	t.pendingApprovals[callbackID] = responseChan
-	t.mu.Unlock()
-
-	// Clean up on return
-	defer func() {
-		t.mu.Lock()
-		delete(t.pendingApprovals, callbackID)
-		t.mu.Unlock()
-	}()
-
-	// Wait for response or timeout
-	select {
-	case response := <-responseChan:
-		return response, nil
-
-	case <-ctx.Done():
 		return ApprovalResponse{
 			Approved: false,
 			Reason:   "timeout",
@@ -281,11 +253,6 @@ func (t *TelegramApprovalHandler) updateMessageWithTimeout(messageID int, req Ap
 
 // answerCallback answers a callback query
 func (t *TelegramApprovalHandler) answerCallback(callbackID string, text string) {
-	if t.api == nil {
-		// Skip in tests
-		return
-	}
-
 	callback := tgbotapi.NewCallback(callbackID, text)
 	_, err := t.api.Request(callback)
 	if err != nil {

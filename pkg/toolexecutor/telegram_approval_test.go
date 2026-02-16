@@ -100,8 +100,9 @@ func TestTelegramApprovalHandler_FormatApprovalMessage(t *testing.T) {
 }
 
 func TestTelegramApprovalHandler_HandleCallback_Approve(t *testing.T) {
+	mockAPI := &MockBotAPI{}
 	handler := &TelegramApprovalHandler{
-		api:              (*tgbotapi.BotAPI)(nil),
+		api:              mockAPI,
 		chatID:           123456,
 		pendingApprovals: make(map[string]chan ApprovalResponse),
 	}
@@ -135,8 +136,9 @@ func TestTelegramApprovalHandler_HandleCallback_Approve(t *testing.T) {
 }
 
 func TestTelegramApprovalHandler_HandleCallback_Deny(t *testing.T) {
+	mockAPI := &MockBotAPI{}
 	handler := &TelegramApprovalHandler{
-		api:              (*tgbotapi.BotAPI)(nil),
+		api:              mockAPI,
 		chatID:           123456,
 		pendingApprovals: make(map[string]chan ApprovalResponse),
 	}
@@ -170,8 +172,9 @@ func TestTelegramApprovalHandler_HandleCallback_Deny(t *testing.T) {
 }
 
 func TestTelegramApprovalHandler_HandleCallback_Expired(t *testing.T) {
+	mockAPI := &MockBotAPI{}
 	handler := &TelegramApprovalHandler{
-		api:              (*tgbotapi.BotAPI)(nil),
+		api:              mockAPI,
 		chatID:           123456,
 		pendingApprovals: make(map[string]chan ApprovalResponse),
 	}
