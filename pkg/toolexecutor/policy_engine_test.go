@@ -322,13 +322,20 @@ func TestPolicyEngine_FilterToolsByPolicy(t *testing.T) {
 	}
 }
 
-// TestPolicyEngine_CheckToolCategory tests category checking (placeholder)
+// TestPolicyEngine_CheckToolCategory tests category checking
 func TestPolicyEngine_CheckToolCategory(t *testing.T) {
 	pe := NewPolicyEngine()
+	registry := NewToolRegistry()
 
-	// This is a placeholder test for future category support
-	result := pe.CheckToolCategory("read_file", "read")
-	assert.False(t, result, "Category checking not yet implemented")
+	// Register tools with categories
+	registry.Register("read_file", "Read file", CategoryRead)
+	registry.Register("write_file", "Write file", CategoryWrite)
+
+	// Check categories
+	assert.True(t, pe.CheckToolCategory("read_file", "read", registry))
+	assert.False(t, pe.CheckToolCategory("read_file", "write", registry))
+	assert.True(t, pe.CheckToolCategory("write_file", "write", registry))
+	assert.False(t, pe.CheckToolCategory("unknown_tool", "read", registry))
 }
 
 // TestPolicyEngine_MergePolicies_ComplexScenarios tests complex merge scenarios

@@ -160,10 +160,17 @@ func (pe *PolicyEngine) MergePolicies(policies ...*ToolPolicy) *ToolPolicy {
 
 // CheckToolCategory checks if a tool belongs to a specific category
 // Categories: read, write, shell, web, spec, general
-func (pe *PolicyEngine) CheckToolCategory(toolName string, category string) bool {
-	// This is a placeholder for category-based policy enforcement
-	// Will be implemented in task D.1.3
-	return false
+func (pe *PolicyEngine) CheckToolCategory(toolName string, category string, registry *ToolRegistry) bool {
+	if registry == nil {
+		return false
+	}
+
+	toolCategory, err := registry.GetCategory(toolName)
+	if err != nil {
+		return false
+	}
+
+	return string(toolCategory) == category
 }
 
 // FilterToolsByPolicy filters a list of tools based on a policy

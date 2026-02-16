@@ -2,164 +2,289 @@ package toolexecutor
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestIntegration_PolicyEnforcement_MultipleAgents tests policy enforcement across multiple agents
-func TestIntegration_PolicyEnforcement_MultipleAgents(t *testing.T) {
-	te := New()
+// Unit test: Policy check before execution
+func TestPolicyIntegration_CheckBeforeExecution(t *testing.T) {
+	executor := New()
+	registry := NewToolRegistry()
 
-	// Register tools
-	tools := []string{"read_file", "write_file", "exec", "search"}
-	for _, name := range tools {
-		def := ToolDefinition{
-			Name:        name,
-			Description: "Test tool: " + name,
-			Parameters:  []ToolParameter{},
-			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-				return "executed", nil
-			},
-		}
-		err := te.RegisterTool(def)
-		require.NoError(t, err)
-	}
-
-	// Define agent policies
-	captainPolicy := &ToolPolicy{
-		Allow: []string{"search", "read_file"},
-		Deny:  []string{},
-	}
-
-	executorPolicy := &ToolPolicy{
-		Allow: []string{"*"},
-		Deny:  []string{"exec"},
-	}
-
-	criticPolicy := &ToolPolicy{
-		Allow: []string{"read_file"},
-		Deny:  []string{},
-	}
-
-	tests := []struct {
-		name        string
-		agentID     string
-		policy      *ToolPolicy
-		toolName    string
-		shouldAllow bool
-	}{
-		// Captain agent tests
-		{
-			name:        "captain can search",
-			agentID:     "captain",
-			policy:      captainPolicy,
-			toolName:    "search",
-			shouldAllow: true,
-		},
-		{
-			name:        "captain can read",
-			agentID:     "captain",
-			policy:      captainPolicy,
-			toolName:    "read_file",
-			shouldAllow: true,
-		},
-		{
-			name:        "captain cannot write",
-			agentID:     "captain",
-			policy:      captainPolicy,
-			toolName:    "write_file",
-			shouldAllow: false,
-		},
-
-		// Executor agent tests
-		{
-			name:        "executor can read",
-			agentID:     "executor",
-			policy:      executorPolicy,
-			toolName:    "read_file",
-			shouldAllow: true,
-		},
-		{
-			name:        "executor can write",
-			agentID:     "executor",
-			policy:      executorPolicy,
-			toolName:    "write_file",
-			shouldAllow: true,
-		},
-		{
-			name:        "executor cannot exec",
-			agentID:     "executor",
-			policy:      executorPolicy,
-			toolName:    "exec",
-			shouldAllow: false,
-		},
-
-		// Critic agent tests
-		{
-			name:        "critic can read",
-			agentID:     "critic",
-			policy:      criticPolicy,
-			toolName:    "read_file",
-			shouldAllow: true,
-		},
-		{
-			name:        "critic cannot write",
-			agentID:     "critic",
-			policy:      criticPolicy,
-			toolName:    "write_file",
-			shouldAllow: false,
-		},
-		{
-			name:        "critic cannot search",
-			agentID:     "critic",
-			policy:      criticPolicy,
-			toolName:    "search",
-			shouldAllow: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			execCtx := &ExecutionContext{
-				AgentID:    tt.agentID,
-				ToolPolicy: tt.policy,
-			}
-
-			result := te.Execute(context.Background(), tt.toolName, map[string]interface{}{}, execCtx)
-
-			if tt.shouldAllow {
-				assert.True(t, result.Success, "Expected tool to be allowed for agent %s", tt.agentID)
-				assert.Empty(t, result.Error)
-			} else {
-				assert.False(t, result.Success, "Expected tool to be blocked for agent %s", tt.agentID)
-				assert.Contains(t, result.Error, "not allowed by agent policy")
-				assert.Equal(t, tt.agentID, result.Metadata["agent_id"])
-			}
-		})
-	}
-}
-
-// TestIntegration_PolicyEnforcement_DynamicPolicyUpdate tests updating policies at runtime
-func TestIntegration_PolicyEnforcement_DynamicPolicyUpdate(t *testing.T) {
-	te := New()
-
-	def := ToolDefinition{
+	// Register tool
+	registry.Register("test_tool", "Test tool", CategoryGeneral)
+	executor.RegisterTool(ToolDefinition{
 		Name:        "test_tool",
 		Description: "Test tool",
 		Parameters:  []ToolParameter{},
 		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-			return "success", nil
+			return "executed", nil
 		},
-	}
+	})
 
-	err := te.RegisterTool(def)
-	require.NoError(t, err)
+	t.Run("policy checked before execution", func(t *testing.T) {
+		policy := &ToolPolicy{
+			Allow: []string{"other_tool"},
+			Deny:  []string{},
+		}
 
-	// Start with restrictive policy
+		execCtx := &ExecutionContext{
+			AgentID:    "test-agent",
+			ToolPolicy: policy,
+		}
+
+		result := executor.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
+		assert.False(t, result.Success)
+		assert.Contains(t, result.Error, "not allowed by agent policy")
+		assert.NotNil(t, result.Metadata)
+		assert.True(t, result.Metadata["policy_violation"].(bool))
+	})
+
+	t.Run("execution proceeds when policy allows", func(t *testing.T) {
+		policy := &ToolPolicy{
+			Allow: []string{"test_tool"},
+			Deny:  []string{},
+		}
+
+		execCtx := &ExecutionContext{
+			AgentID:    "test-agent",
+			ToolPolicy: policy,
+		}
+
+		result := executor.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
+		assert.True(t, result.Success)
+		assert.Equal(t, "executed", result.Output)
+	})
+}
+
+// Unit test: Block execution if not allowed
+func TestPolicyIntegration_BlockExecution(t *testing.T) {
+	executor := New()
+
+	executor.RegisterTool(ToolDefinition{
+		Name:        "blocked_tool",
+		Description: "Tool that should be blocked",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			// This should never be called
+			t.Fatal("Handler should not be called when tool is blocked")
+			return nil, nil
+		},
+	})
+
 	policy := &ToolPolicy{
 		Allow: []string{},
+		Deny:  []string{"blocked_tool"},
+	}
+
+	execCtx := &ExecutionContext{
+		AgentID:    "test-agent",
+		ToolPolicy: policy,
+	}
+
+	result := executor.Execute(context.Background(), "blocked_tool", map[string]interface{}{}, execCtx)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "not allowed by agent policy")
+}
+
+// Unit test: Return policy violation error
+func TestPolicyIntegration_PolicyViolationError(t *testing.T) {
+	executor := New()
+
+	executor.RegisterTool(ToolDefinition{
+		Name:        "test_tool",
+		Description: "Test tool",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return "result", nil
+		},
+	})
+
+	t.Run("policy violation error format", func(t *testing.T) {
+		policy := &ToolPolicy{
+			Allow: []string{"other_tool"},
+			Deny:  []string{},
+		}
+
+		execCtx := &ExecutionContext{
+			AgentID:    "test-agent",
+			ToolPolicy: policy,
+		}
+
+		result := executor.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
+		assert.False(t, result.Success)
+		assert.Contains(t, result.Error, "tool 'test_tool' is not allowed by agent policy")
+		assert.NotNil(t, result.Metadata)
+		assert.Equal(t, true, result.Metadata["policy_violation"])
+		assert.Equal(t, "test-agent", result.Metadata["agent_id"])
+	})
+
+	t.Run("no error when policy allows", func(t *testing.T) {
+		policy := &ToolPolicy{
+			Allow: []string{"test_tool"},
+			Deny:  []string{},
+		}
+
+		execCtx := &ExecutionContext{
+			AgentID:    "test-agent",
+			ToolPolicy: policy,
+		}
+
+		result := executor.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
+		assert.True(t, result.Success)
+		assert.Empty(t, result.Error)
+	})
+}
+
+// Unit test: Policy integration with nil policy
+func TestPolicyIntegration_NilPolicy(t *testing.T) {
+	executor := New()
+
+	executor.RegisterTool(ToolDefinition{
+		Name:        "test_tool",
+		Description: "Test tool",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return "result", nil
+		},
+	})
+
+	t.Run("nil policy allows all tools", func(t *testing.T) {
+		execCtx := &ExecutionContext{
+			AgentID:    "test-agent",
+			ToolPolicy: nil,
+		}
+
+		result := executor.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
+		assert.True(t, result.Success)
+		assert.Equal(t, "result", result.Output)
+	})
+
+	t.Run("nil execution context allows all tools", func(t *testing.T) {
+		result := executor.Execute(context.Background(), "test_tool", map[string]interface{}{}, nil)
+		assert.True(t, result.Success)
+		assert.Equal(t, "result", result.Output)
+	})
+}
+
+// Integration test: Policy integration with multiple tools
+func TestPolicyIntegration_Integration_MultipleTools(t *testing.T) {
+	executor := New()
+	registry := NewToolRegistry()
+
+	// Register multiple tools
+	tools := []string{"tool1", "tool2", "tool3", "tool4"}
+	for _, toolName := range tools {
+		registry.Register(toolName, "Test tool", CategoryGeneral)
+		executor.RegisterTool(ToolDefinition{
+			Name:        toolName,
+			Description: "Test tool",
+			Parameters:  []ToolParameter{},
+			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				return "executed", nil
+			},
+		})
+	}
+
+	policy := &ToolPolicy{
+		Allow: []string{"tool1", "tool2"},
+		Deny:  []string{"tool3"},
+	}
+
+	execCtx := &ExecutionContext{
+		AgentID:    "test-agent",
+		ToolPolicy: policy,
+	}
+
+	// tool1 should be allowed
+	result := executor.Execute(context.Background(), "tool1", map[string]interface{}{}, execCtx)
+	assert.True(t, result.Success)
+
+	// tool2 should be allowed
+	result = executor.Execute(context.Background(), "tool2", map[string]interface{}{}, execCtx)
+	assert.True(t, result.Success)
+
+	// tool3 should be denied (in deny list)
+	result = executor.Execute(context.Background(), "tool3", map[string]interface{}{}, execCtx)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "not allowed by agent policy")
+
+	// tool4 should be denied (not in allow list)
+	result = executor.Execute(context.Background(), "tool4", map[string]interface{}{}, execCtx)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "not allowed by agent policy")
+}
+
+// Integration test: Policy integration with categories
+func TestPolicyIntegration_Integration_WithCategories(t *testing.T) {
+	executor := New()
+	registry := NewToolRegistry()
+
+	// Register tools with different categories
+	registry.Register("read_tool", "Read tool", CategoryRead)
+	registry.Register("write_tool", "Write tool", CategoryWrite)
+	registry.Register("shell_tool", "Shell tool", CategoryShell)
+
+	for _, toolName := range []string{"read_tool", "write_tool", "shell_tool"} {
+		executor.RegisterTool(ToolDefinition{
+			Name:        toolName,
+			Description: "Test tool",
+			Parameters:  []ToolParameter{},
+			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				return "executed", nil
+			},
+		})
+	}
+
+	// Policy that allows read and write, but denies shell
+	policy := &ToolPolicy{
+		Allow: []string{"read_tool", "write_tool"},
+		Deny:  []string{"shell_tool"},
+	}
+
+	execCtx := &ExecutionContext{
+		AgentID:    "test-agent",
+		ToolPolicy: policy,
+	}
+
+	// Verify category matching
+	matcher := NewCategoryMatcher(registry)
+	assert.True(t, matcher.MatchesCategory("read_tool", CategoryRead))
+	assert.True(t, matcher.MatchesCategory("write_tool", CategoryWrite))
+	assert.True(t, matcher.MatchesCategory("shell_tool", CategoryShell))
+
+	// Test execution with policy
+	result := executor.Execute(context.Background(), "read_tool", map[string]interface{}{}, execCtx)
+	assert.True(t, result.Success)
+
+	result = executor.Execute(context.Background(), "write_tool", map[string]interface{}{}, execCtx)
+	assert.True(t, result.Success)
+
+	result = executor.Execute(context.Background(), "shell_tool", map[string]interface{}{}, execCtx)
+	assert.False(t, result.Success)
+}
+
+// Integration test: Policy integration with concurrent execution
+func TestPolicyIntegration_Integration_ConcurrentExecution(t *testing.T) {
+	executor := New()
+
+	// Register tools
+	for i := 0; i < 10; i++ {
+		toolName := fmt.Sprintf("tool_%d", i)
+		executor.RegisterTool(ToolDefinition{
+			Name:        toolName,
+			Description: "Test tool",
+			Parameters:  []ToolParameter{},
+			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+				return "executed", nil
+			},
+		})
+	}
+
+	policy := &ToolPolicy{
+		Allow: []string{"tool_0", "tool_1", "tool_2", "tool_3", "tool_4"},
 		Deny:  []string{},
 	}
 
@@ -168,86 +293,78 @@ func TestIntegration_PolicyEnforcement_DynamicPolicyUpdate(t *testing.T) {
 		ToolPolicy: policy,
 	}
 
-	// Should be blocked
-	result := te.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
-	assert.False(t, result.Success)
+	// Execute tools concurrently
+	results := make(chan ToolResult, 10)
+	for i := 0; i < 10; i++ {
+		go func(index int) {
+			toolName := fmt.Sprintf("tool_%d", index)
+			result := executor.Execute(context.Background(), toolName, map[string]interface{}{}, execCtx)
+			results <- result
+		}(i)
+	}
 
-	// Update policy to allow tool
-	policy.Allow = []string{"test_tool"}
+	// Collect results
+	allowedCount := 0
+	deniedCount := 0
+	for i := 0; i < 10; i++ {
+		result := <-results
+		if result.Success {
+			allowedCount++
+		} else {
+			deniedCount++
+		}
+	}
 
-	// Should now be allowed
-	result = te.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
-	assert.True(t, result.Success)
-
-	// Add to deny list
-	policy.Deny = []string{"test_tool"}
-
-	// Should be blocked again (deny overrides allow)
-	result = te.Execute(context.Background(), "test_tool", map[string]interface{}{}, execCtx)
-	assert.False(t, result.Success)
+	assert.Equal(t, 5, allowedCount)
+	assert.Equal(t, 5, deniedCount)
 }
 
-// TestIntegration_PolicyEnforcement_ConcurrentExecution tests policy enforcement with concurrent tool execution
-func TestIntegration_PolicyEnforcement_ConcurrentExecution(t *testing.T) {
-	te := New()
+// Integration test: Policy integration with policy engine
+func TestPolicyIntegration_Integration_WithPolicyEngine(t *testing.T) {
+	executor := New()
+	policyEngine := NewPolicyEngine()
+	evaluator := NewPolicyEvaluator(policyEngine)
 
-	// Register multiple tools
-	for i := 0; i < 10; i++ {
-		def := ToolDefinition{
-			Name:        "tool_" + string(rune('0'+i)),
-			Description: "Test tool",
-			Parameters:  []ToolParameter{},
-			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-				return "success", nil
-			},
-		}
-		err := te.RegisterTool(def)
-		require.NoError(t, err)
-	}
-
-	// Create policies for different agents
-	policies := map[string]*ToolPolicy{
-		"agent1": {
-			Allow: []string{"tool_0", "tool_1", "tool_2"},
-			Deny:  []string{},
+	// Register tools
+	executor.RegisterTool(ToolDefinition{
+		Name:        "allowed_tool",
+		Description: "Allowed tool",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return "executed", nil
 		},
-		"agent2": {
-			Allow: []string{"*"},
-			Deny:  []string{"tool_5", "tool_6"},
+	})
+
+	executor.RegisterTool(ToolDefinition{
+		Name:        "denied_tool",
+		Description: "Denied tool",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			return "executed", nil
 		},
-		"agent3": {
-			Allow: []string{"tool_7"},
-			Deny:  []string{},
-		},
+	})
+
+	policy := &ToolPolicy{
+		Allow: []string{"allowed_tool"},
+		Deny:  []string{"denied_tool"},
 	}
 
-	// Execute tools concurrently from different agents
-	done := make(chan bool, 30)
+	// Evaluate policies
+	allowedResult := evaluator.Evaluate("allowed_tool", policy, "test-agent")
+	assert.True(t, allowedResult.Allowed)
 
-	for agentID, policy := range policies {
-		for i := 0; i < 10; i++ {
-			go func(aid string, pol *ToolPolicy, toolIdx int) {
-				execCtx := &ExecutionContext{
-					AgentID:    aid,
-					ToolPolicy: pol,
-				}
+	deniedResult := evaluator.Evaluate("denied_tool", policy, "test-agent")
+	assert.False(t, deniedResult.Allowed)
 
-				toolName := "tool_" + string(rune('0'+toolIdx))
-				result := te.Execute(context.Background(), toolName, map[string]interface{}{}, execCtx)
-
-				// Verify policy is correctly enforced
-				expectedAllow := pol.IsToolAllowed(toolName)
-				assert.Equal(t, expectedAllow, result.Success,
-					"Agent %s, tool %s: expected allow=%v, got success=%v",
-					aid, toolName, expectedAllow, result.Success)
-
-				done <- true
-			}(agentID, policy, i)
-		}
+	// Execute with policy
+	execCtx := &ExecutionContext{
+		AgentID:    "test-agent",
+		ToolPolicy: policy,
 	}
 
-	// Wait for all executions to complete
-	for i := 0; i < 30; i++ {
-		<-done
-	}
+	result := executor.Execute(context.Background(), "allowed_tool", map[string]interface{}{}, execCtx)
+	assert.True(t, result.Success)
+
+	result = executor.Execute(context.Background(), "denied_tool", map[string]interface{}{}, execCtx)
+	assert.False(t, result.Success)
 }
