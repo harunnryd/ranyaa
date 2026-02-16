@@ -10,6 +10,37 @@ import (
 	"github.com/xeipuuv/gojsonschema"
 )
 
+// ToolPolicy defines which tools an agent can use
+type ToolPolicy struct {
+	Allow []string `json:"allow"` // List of allowed tools (* for all)
+	Deny  []string `json:"deny"`  // List of denied tools (overrides allow)
+}
+
+// IsToolAllowed checks if a tool is allowed by the policy
+func (tp *ToolPolicy) IsToolAllowed(toolName string) bool {
+	if tp == nil {
+		// No policy means allow all
+		return true
+	}
+
+	// Check deny list first (overrides allow list)
+	for _, denied := range tp.Deny {
+		if denied == toolName || denied == "*" {
+			return false
+		}
+	}
+
+	// Check allow list
+	for _, allowed := range tp.Allow {
+		if allowed == toolName || allowed == "*" {
+			return true
+		}
+	}
+
+	// If no explicit allow, deny by default
+	return false
+}
+
 // ToolParameter defines a parameter for a tool
 type ToolParameter struct {
 	Name        string      `json:"name"`
@@ -36,6 +67,8 @@ type ExecutionContext struct {
 	WorkingDir    string
 	Timeout       time.Duration
 	SandboxPolicy map[string]interface{}
+	AgentID       string // Agent ID for policy enforcement
+	ToolPolicy    *ToolPolicy
 }
 
 // ToolResult represents the result of a tool execution
@@ -133,6 +166,24 @@ func (te *ToolExecutor) GetToolCount() int {
 // Execute executes a tool with the given parameters
 func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map[string]interface{}, execCtx *ExecutionContext) ToolResult {
 	startTime := time.Now()
+
+	// Check tool policy if provided
+	if execCtx != nil && execCtx.ToolPolicy != nil {
+		if !execCtx.ToolPolicy.IsToolAllowed(toolName) {
+			log.Warn().
+				Str("tool", toolName).
+				Str("agent_id", execCtx.AgentID).
+				Msg("Tool execution blocked by policy")
+			return ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("tool '%s' is not allowed by agent policy", toolName),
+				Metadata: map[string]interface{}{
+					"policy_violation": true,
+					"agent_id":         execCtx.AgentID,
+				},
+			}
+		}
+	}
 
 	// Get tool
 	te.mu.RLock()

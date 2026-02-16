@@ -17,30 +17,30 @@ const (
 
 // AgentConfig defines the configuration for an agent
 type AgentConfig struct {
-	ID                     string            `json:"id"`
-	Name                   string            `json:"name"`
-	Role                   AgentRole         `json:"role"`
-	Model                  string            `json:"model"`
-	Temperature            float64           `json:"temperature"`
-	MaxTokens              int               `json:"max_tokens"`
-	SystemPrompt           string            `json:"system_prompt,omitempty"`
-	Tools                  ToolPolicy        `json:"tools"`
-	Workspace              string            `json:"workspace,omitempty"`
-	Sandbox                SandboxConfig     `json:"sandbox"`
-	MaxConcurrentSubAgents int               `json:"max_concurrent_sub_agents"`
-	Metadata               map[string]string `json:"metadata,omitempty"`
+	ID                     string            `json:"id" yaml:"id"`
+	Name                   string            `json:"name" yaml:"name"`
+	Role                   AgentRole         `json:"role" yaml:"role"`
+	Model                  string            `json:"model" yaml:"model"`
+	Temperature            float64           `json:"temperature" yaml:"temperature"`
+	MaxTokens              int               `json:"max_tokens" yaml:"max_tokens"`
+	SystemPrompt           string            `json:"system_prompt,omitempty" yaml:"system_prompt,omitempty"`
+	Tools                  ToolPolicy        `json:"tools" yaml:"tools"`
+	Workspace              string            `json:"workspace,omitempty" yaml:"workspace,omitempty"`
+	Sandbox                SandboxConfig     `json:"sandbox" yaml:"sandbox"`
+	MaxConcurrentSubAgents int               `json:"max_concurrent_sub_agents" yaml:"max_concurrent_sub_agents"`
+	Metadata               map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 // ToolPolicy defines which tools an agent can use
 type ToolPolicy struct {
-	Allow []string `json:"allow"` // List of allowed tools (* for all)
-	Deny  []string `json:"deny"`  // List of denied tools (overrides allow)
+	Allow []string `json:"allow" yaml:"allow"` // List of allowed tools (* for all)
+	Deny  []string `json:"deny" yaml:"deny"`   // List of denied tools (overrides allow)
 }
 
 // SandboxConfig defines sandbox settings for an agent
 type SandboxConfig struct {
-	Mode  SandboxMode  `json:"mode"`  // off, all, tools
-	Scope SandboxScope `json:"scope"` // agent, session
+	Mode  SandboxMode  `json:"mode" yaml:"mode"`   // off, all, tools
+	Scope SandboxScope `json:"scope" yaml:"scope"` // agent, session
 }
 
 // SandboxMode defines how sandboxing is applied
