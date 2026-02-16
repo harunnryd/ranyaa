@@ -84,11 +84,24 @@ func TestMemorySearch(t *testing.T) {
 	})
 
 	t.Run("no results", func(t *testing.T) {
+		// Create a separate manager with empty database for this test
+		emptyDir := t.TempDir()
+		emptyDBPath := filepath.Join(emptyDir, "empty.db")
+
+		emptyManager, err := NewManager(Config{
+			WorkspacePath:     emptyDir,
+			DBPath:            emptyDBPath,
+			Logger:            logger,
+			EmbeddingProvider: NewMockEmbeddingProvider(128),
+		})
+		require.NoError(t, err)
+		defer emptyManager.Close()
+
 		params := MemorySearchParams{
 			Query: "nonexistent query xyz123",
 		}
 
-		result, err := MemorySearch(context.Background(), manager, params)
+		result, err := MemorySearch(context.Background(), emptyManager, params)
 		require.NoError(t, err)
 		assert.Equal(t, 0, result.Count)
 	})

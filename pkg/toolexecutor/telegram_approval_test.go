@@ -235,9 +235,3 @@ func TestTelegramApprovalHandler_HandleCallback_InvalidData(t *testing.T) {
 	err := handler.HandleCallback(callback)
 	require.NoError(t, err)
 }
-
-func TestTelegramApprovalHandler_RequestApproval_Timeout(t *testing.T) {
-	// This test would require a real bot API or more complex mocking
-	// Skipping for now as it's covered by integration tests
-	t.Skip("Requires complex mocking or real bot API")
-}
