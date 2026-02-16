@@ -1,0 +1,117 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+ranya
+*.test
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go build cache
+.cache/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Kiro specs - DO NOT commit to GitHub
+.kiro/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Documentation build artifacts
+docs/_build/
+site/
+
+# Test coverage
+profile.cov
+coverage.out
+
+# Compiled Object files
+*.o
+*.a
+
+# Debug files
+debug
+__debug_bin
+
+# Air live reload
+.air.toml
+tmp/
+
+# Session files (runtime data)
+.ranya/
+
+# Memory database files (runtime data)
+memory.db*
+
+# Build output
+dist/
+build/
+bin/
+
+# Node modules (if any frontend tools)
+node_modules/
+
+# Backup files
+*.bak
+*.backup
+
+# Certificate files
+*.pem
+*.key
+*.crt
+*.cer
+
+# Configuration files with secrets
+config.local.yaml
+config.local.yml
+secrets.yaml
+secrets.yml
