@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -117,6 +118,7 @@ const (
 type Client struct {
 	ID            string
 	Conn          *websocket.Conn
+	writeMu       sync.Mutex
 	Authenticated bool
 	Challenge     string
 	ConnectedAt   time.Time
@@ -125,4 +127,18 @@ type Client struct {
 	AuthAttempts  int
 	RateLimiter   *ClientRateLimiter
 	State         ClientState
+}
+
+// WriteJSON serializes JSON writes to the websocket connection.
+func (c *Client) WriteJSON(v interface{}) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.Conn.WriteJSON(v)
+}
+
+// WriteMessage serializes raw websocket writes.
+func (c *Client) WriteMessage(messageType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.Conn.WriteMessage(messageType, data)
 }

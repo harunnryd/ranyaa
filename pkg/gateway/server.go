@@ -314,7 +314,7 @@ func (s *Server) sendAuthChallenge(client *Client) error {
 		Challenge: challenge,
 	}
 
-	return client.Conn.WriteJSON(msg)
+	return client.WriteJSON(msg)
 }
 
 // handleClient handles messages from a client
@@ -389,7 +389,7 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 		defer s.inFlightReqs.Done()
 
 		response := s.router.RouteRequest(req)
-		if err := client.Conn.WriteJSON(response); err != nil {
+		if err := client.WriteJSON(response); err != nil {
 			s.logger.Error().
 				Err(err).
 				Str("clientId", client.ID).
@@ -459,7 +459,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthMessage(client *Client, authResp AuthResponse) {
 	result := s.authHandler.HandleAuthResponse(client, authResp.Signature)
 
-	if err := client.Conn.WriteJSON(result); err != nil {
+	if err := client.WriteJSON(result); err != nil {
 		s.logger.Error().Err(err).Str("clientId", client.ID).Msg("Failed to send auth result")
 		return
 	}
@@ -490,7 +490,7 @@ func (s *Server) sendError(client *Client, requestID string, code int, message s
 		},
 	}
 
-	if err := client.Conn.WriteJSON(response); err != nil {
+	if err := client.WriteJSON(response); err != nil {
 		s.logger.Error().
 			Err(err).
 			Str("clientId", client.ID).

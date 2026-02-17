@@ -78,7 +78,7 @@ func (b *EventBroadcaster) broadcastMessage(msg EventMessage) {
 	failureCount := 0
 
 	for _, client := range clients {
-		if err := client.Conn.WriteMessage(1, jsonData); err != nil {
+		if err := client.WriteMessage(1, jsonData); err != nil {
 			b.logger.Warn().
 				Err(err).
 				Str("clientId", client.ID).
