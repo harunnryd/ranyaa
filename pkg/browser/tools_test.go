@@ -9,16 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockToolExecutor implements toolexecutor interface for testing
-type mockToolExecutor struct {
-	registeredTools []toolexecutor.ToolDefinition
-}
-
-func (m *mockToolExecutor) RegisterTool(def toolexecutor.ToolDefinition) error {
-	m.registeredTools = append(m.registeredTools, def)
-	return nil
-}
-
 func TestRegisterBrowserTools(t *testing.T) {
 	// Create mock browser context (nil is acceptable for registration test)
 	var browserContext *BrowserServerContext

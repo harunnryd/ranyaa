@@ -140,6 +140,7 @@ func isRunning(pidFile string) bool {
 	return err == nil
 }
 
+// stopDaemon sends SIGTERM to the daemon process
 func stopDaemon(pidFile string) error {
 	if !isRunning(pidFile) {
 		return fmt.Errorf("daemon is not running")
@@ -160,6 +161,7 @@ func stopDaemon(pidFile string) error {
 		return fmt.Errorf("failed to find process: %w", err)
 	}
 
+	fmt.Printf("Stopping daemon (PID: %d)...\n", pid)
 	if err := process.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("failed to send SIGTERM: %w", err)
 	}

@@ -29,36 +29,12 @@ func init() {
 func runStop(cmd *cobra.Command, args []string) error {
 	pidFile := getPIDFilePath()
 
-	if !isRunning(pidFile) {
-		return fmt.Errorf("daemon is not running")
+	// Use shared stopDaemon function for graceful shutdown
+	if err := stopDaemon(pidFile); err != nil {
+		return err
 	}
 
-	// Read PID
-	data, err := os.ReadFile(pidFile)
-	if err != nil {
-		return fmt.Errorf("failed to read PID file: %w", err)
-	}
-
-	var pid int
-	_, err = fmt.Sscanf(string(data), "%d", &pid)
-	if err != nil {
-		return fmt.Errorf("invalid PID file: %w", err)
-	}
-
-	// Find process
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("failed to find process: %w", err)
-	}
-
-	// Send SIGTERM
-	fmt.Printf("Stopping daemon (PID: %d)...\n", pid)
-	err = process.Signal(syscall.SIGTERM)
-	if err != nil {
-		return fmt.Errorf("failed to send SIGTERM: %w", err)
-	}
-
-	// Wait for process to stop
+	// Wait for process to stop with timeout
 	deadline := time.Now().Add(time.Duration(stopTimeout) * time.Second)
 	for time.Now().Before(deadline) {
 		if !isRunning(pidFile) {
@@ -71,6 +47,24 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 	// Force kill if timeout
 	fmt.Println("Timeout reached, sending SIGKILL...")
+
+	// Read PID for force kill
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+
+	var pid int
+	_, err = fmt.Sscanf(string(data), "%d", &pid)
+	if err != nil {
+		return fmt.Errorf("invalid PID file: %w", err)
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %w", err)
+	}
+
 	err = process.Signal(syscall.SIGKILL)
 	if err != nil {
 		return fmt.Errorf("failed to send SIGKILL: %w", err)

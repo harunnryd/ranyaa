@@ -802,13 +802,15 @@ func (m *Manager) chunkContent(content string) []chunk {
 		currentOffset += lineLen
 	}
 
-	// Add final chunk
-	if currentChunk.Len() > 0 {
-		chunks = append(chunks, chunk{
-			content:     strings.TrimSpace(currentChunk.String()),
-			startOffset: startOffset,
-			endOffset:   currentOffset,
-		})
+	// Add final chunk if it meets minSize or is the only chunk
+	if currentChunk.Len() >= minSize || len(chunks) == 0 {
+		if currentChunk.Len() > 0 {
+			chunks = append(chunks, chunk{
+				content:     strings.TrimSpace(currentChunk.String()),
+				startOffset: startOffset,
+				endOffset:   currentOffset,
+			})
+		}
 	}
 
 	return chunks

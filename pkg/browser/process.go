@@ -18,7 +18,6 @@ import (
 // ProcessManager manages Chrome browser processes
 type ProcessManager struct {
 	profile   *ResolvedBrowserProfile
-	cmd       *exec.Cmd
 	launcher  *launcher.Launcher
 	mu        sync.RWMutex
 	isRunning bool

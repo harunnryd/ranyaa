@@ -1,7 +1,6 @@
 package webhook
 
 import (
-	"net/http"
 	"time"
 )
 
@@ -76,15 +75,4 @@ type ServerOptions struct {
 	RegistryPath       string        // Path to webhook registry file
 	RateLimitPerMinute int           // Requests per minute per IP (default: 100)
 	DefaultTimeout     time.Duration // Default handler timeout (default: 30s)
-}
-
-// rawBodyKey is the context key for storing raw request body
-type contextKey string
-
-const rawBodyContextKey contextKey = "rawBody"
-
-// requestContext wraps http.Request with additional context
-type requestContext struct {
-	*http.Request
-	rawBody string
 }
