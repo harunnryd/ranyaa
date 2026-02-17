@@ -412,15 +412,10 @@ func (sm *SessionManager) GetSessionInfo(sessionKey string) (map[string]interfac
 
 // Close closes the session manager
 func (sm *SessionManager) Close() error {
-	// Wait for all write locks to be released
+	// Clear all write locks
 	sm.locksMu.Lock()
-	defer sm.locksMu.Unlock()
-
-	for sessionKey, lock := range sm.writeLocks {
-		lock.Lock()
-		lock.Unlock()
-		delete(sm.writeLocks, sessionKey)
-	}
+	sm.writeLocks = make(map[string]*sync.Mutex)
+	sm.locksMu.Unlock()
 
 	log.Info().Msg("Session manager closed")
 

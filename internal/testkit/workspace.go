@@ -1,4 +1,4 @@
-package workspace
+package testkit
 
 import (
 	"os"
@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/harun/ranya/pkg/workspace"
 )
 
 // TestWorkspace represents a temporary workspace for testing
@@ -140,53 +142,53 @@ func GenerateLargeFile(size int) string {
 }
 
 // ExpectedFileType returns the expected file type for a given path
-func ExpectedFileType(path string) WorkspaceFileType {
+func ExpectedFileType(path string) workspace.WorkspaceFileType {
 	base := filepath.Base(path)
 	ext := filepath.Ext(path)
 	dir := filepath.Dir(path)
 
 	switch base {
 	case "AGENTS.md":
-		return FileTypeAgents
+		return workspace.FileTypeAgents
 	case "SOUL.md":
-		return FileTypeSoul
+		return workspace.FileTypeSoul
 	case "TOOLS.md":
-		return FileTypeTools
+		return workspace.FileTypeTools
 	case "MEMORY.md":
-		return FileTypeMemory
+		return workspace.FileTypeMemory
 	case "WEBHOOKS.md":
-		return FileTypeWebhooks
+		return workspace.FileTypeWebhooks
 	case "CRON.md":
-		return FileTypeCron
+		return workspace.FileTypeCron
 	case "PLUGINS.md":
-		return FileTypePlugins
+		return workspace.FileTypePlugins
 	case "SKILL.md":
-		return FileTypeSkill
+		return workspace.FileTypeSkill
 	case "plugin.json":
-		return FileTypePluginManifest
+		return workspace.FileTypePluginManifest
 	}
 
 	switch ext {
 	case ".yaml", ".yml":
-		return FileTypeConfig
+		return workspace.FileTypeConfig
 	case ".json":
 		if base != "plugin.json" {
-			return FileTypeConfig
+			return workspace.FileTypeConfig
 		}
 	case ".go":
 		if filepath.Base(dir) == "plugins" || strings.Contains(dir, "plugins") {
-			return FileTypePluginCode
+			return workspace.FileTypePluginCode
 		}
 	}
 
-	return FileTypeOther
+	return workspace.FileTypeOther
 }
 
 // IsCriticalFile returns whether a file type is critical
-func IsCriticalFile(fileType WorkspaceFileType) bool {
+func IsCriticalFile(fileType workspace.WorkspaceFileType) bool {
 	switch fileType {
-	case FileTypeAgents, FileTypeSoul, FileTypeTools, FileTypeWebhooks,
-		FileTypeCron, FileTypePlugins, FileTypeConfig:
+	case workspace.FileTypeAgents, workspace.FileTypeSoul, workspace.FileTypeTools, workspace.FileTypeWebhooks,
+		workspace.FileTypeCron, workspace.FileTypePlugins, workspace.FileTypeConfig:
 		return true
 	default:
 		return false

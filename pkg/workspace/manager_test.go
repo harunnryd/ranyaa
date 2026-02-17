@@ -12,8 +12,8 @@ import (
 )
 
 func TestWorkspaceManager_Create(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -27,9 +27,9 @@ func TestWorkspaceManager_Create(t *testing.T) {
 }
 
 func TestWorkspaceManager_Init(t *testing.T) {
-	files := GenerateTestFiles()
-	ws := CreateTempWorkspace(t, files)
-	defer ws.Cleanup(t)
+	files := generateTestFiles()
+	ws := createTempWorkspace(t, files)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -62,10 +62,10 @@ func TestWorkspaceManager_Init(t *testing.T) {
 }
 
 func TestWorkspaceManager_GetFile(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"AGENTS.md": "# Agent Instructions",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -90,10 +90,10 @@ func TestWorkspaceManager_GetFile(t *testing.T) {
 }
 
 func TestWorkspaceManager_GetFileByName(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"AGENTS.md": "# Agent Instructions",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -118,10 +118,10 @@ func TestWorkspaceManager_GetFileByName(t *testing.T) {
 
 func TestWorkspaceManager_GetFileContent(t *testing.T) {
 	content := "# Agent Instructions\n\nYou are an AI assistant."
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"AGENTS.md": content,
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -149,8 +149,8 @@ func TestWorkspaceManager_GetAllFiles(t *testing.T) {
 		"SOUL.md":   "# Soul",
 		"TOOLS.md":  "# Tools",
 	}
-	ws := CreateTempWorkspace(t, files)
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, files)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -178,8 +178,8 @@ func TestWorkspaceManager_GetFilesByType(t *testing.T) {
 		"config/test.yaml": "key: value",
 		"config/app.yaml":  "app: test",
 	}
-	ws := CreateTempWorkspace(t, files)
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, files)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -205,8 +205,8 @@ func TestWorkspaceManager_GetFilesByType(t *testing.T) {
 }
 
 func TestWorkspaceManager_FileAdded(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -254,10 +254,10 @@ func TestWorkspaceManager_FileAdded(t *testing.T) {
 }
 
 func TestWorkspaceManager_FileChanged(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"test.md": "initial content",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -305,10 +305,10 @@ func TestWorkspaceManager_FileChanged(t *testing.T) {
 }
 
 func TestWorkspaceManager_FileDeleted(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"test.md": "content",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -361,8 +361,8 @@ func TestWorkspaceManager_CriticalFileIdentification(t *testing.T) {
 		"MEMORY.md":   "# Memory",
 		"config.yaml": "key: value",
 	}
-	ws := CreateTempWorkspace(t, files)
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, files)
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,
@@ -394,8 +394,8 @@ func TestWorkspaceManager_CriticalFileIdentification(t *testing.T) {
 }
 
 func TestWorkspaceManager_Close(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	config := WorkspaceConfig{
 		WorkspacePath: ws.Path,

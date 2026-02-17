@@ -42,7 +42,7 @@ func TestWorkspaceValidator_ValidateLargeMarkdown(t *testing.T) {
 
 	file := &LoadedFile{
 		Path:    "/workspace/AGENTS.md",
-		Content: GenerateLargeFile(MaxRecommendedFileSize + 1000),
+		Content: generateLargeFile(MaxRecommendedFileSize + 1000),
 		Type:    FileTypeAgents,
 		Size:    MaxRecommendedFileSize + 1000,
 	}

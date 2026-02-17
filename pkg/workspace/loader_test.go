@@ -11,10 +11,10 @@ import (
 )
 
 func TestWorkspaceLoader_LoadFile_Markdown(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"AGENTS.md": "# Agent Instructions\n\nYou are an AI assistant.",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "AGENTS.md")
@@ -30,10 +30,10 @@ func TestWorkspaceLoader_LoadFile_Markdown(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_YAML(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"config/test.yaml": "key: value\nport: 8080\n",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "config/test.yaml")
@@ -52,10 +52,10 @@ func TestWorkspaceLoader_LoadFile_YAML(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_JSON(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"config/test.json": `{"name": "test", "version": "1.0.0"}`,
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "config/test.json")
@@ -74,10 +74,10 @@ func TestWorkspaceLoader_LoadFile_JSON(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_PluginManifest(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"plugins/test/plugin.json": `{"id": "test", "name": "Test Plugin", "version": "1.0.0"}`,
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "plugins/test/plugin.json")
@@ -90,10 +90,10 @@ func TestWorkspaceLoader_LoadFile_PluginManifest(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_InvalidYAML(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
-		"config/invalid.yaml": GenerateInvalidYAML(),
+	ws := createTempWorkspace(t, map[string]string{
+		"config/invalid.yaml": generateInvalidYAML(),
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "config/invalid.yaml")
@@ -104,10 +104,10 @@ func TestWorkspaceLoader_LoadFile_InvalidYAML(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_InvalidJSON(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
-		"plugins/test/plugin.json": GenerateInvalidJSON(),
+	ws := createTempWorkspace(t, map[string]string{
+		"plugins/test/plugin.json": generateInvalidJSON(),
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "plugins/test/plugin.json")
@@ -118,8 +118,8 @@ func TestWorkspaceLoader_LoadFile_InvalidJSON(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_NonExistent(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 	filePath := filepath.Join(ws.Path, "nonexistent.md")
@@ -130,12 +130,12 @@ func TestWorkspaceLoader_LoadFile_NonExistent(t *testing.T) {
 }
 
 func TestWorkspaceLoader_LoadFile_TooLarge(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	// Create a file larger than MaxFileSize
 	largeFile := filepath.Join(ws.Path, "large.txt")
-	content := GenerateLargeFile(MaxFileSize + 1000)
+	content := generateLargeFile(MaxFileSize + 1000)
 	err := os.WriteFile(largeFile, []byte(content), 0644)
 	require.NoError(t, err)
 
@@ -199,8 +199,8 @@ func TestWorkspaceLoader_ComputeHash(t *testing.T) {
 }
 
 func TestWorkspaceLoader_ValidatePath_DirectoryTraversal(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 
@@ -225,8 +225,8 @@ func TestWorkspaceLoader_ValidatePath_DirectoryTraversal(t *testing.T) {
 }
 
 func TestWorkspaceLoader_ValidatePath_OutsideWorkspace(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 
@@ -238,8 +238,8 @@ func TestWorkspaceLoader_ValidatePath_OutsideWorkspace(t *testing.T) {
 }
 
 func TestWorkspaceLoader_ValidatePath_ValidPath(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	loader := NewWorkspaceLoader(ws.Path)
 

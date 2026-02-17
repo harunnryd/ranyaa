@@ -12,8 +12,8 @@ import (
 )
 
 func TestWorkspaceWatcher_Create(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	config := WorkspaceWatcherConfig{
 		WorkspacePath:      ws.Path,
@@ -28,8 +28,8 @@ func TestWorkspaceWatcher_Create(t *testing.T) {
 }
 
 func TestWorkspaceWatcher_StartStop(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	config := WorkspaceWatcherConfig{
 		WorkspacePath:      ws.Path,
@@ -50,8 +50,8 @@ func TestWorkspaceWatcher_StartStop(t *testing.T) {
 }
 
 func TestWorkspaceWatcher_FileAdded(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{})
-	defer ws.Cleanup(t)
+	ws := createTempWorkspace(t, map[string]string{})
+	defer ws.cleanup(t)
 
 	var addedPath string
 	var wg sync.WaitGroup
@@ -95,10 +95,10 @@ func TestWorkspaceWatcher_FileAdded(t *testing.T) {
 }
 
 func TestWorkspaceWatcher_FileChanged(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"test.md": "initial content",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	var changedPath string
 	var wg sync.WaitGroup
@@ -145,10 +145,10 @@ func TestWorkspaceWatcher_FileChanged(t *testing.T) {
 }
 
 func TestWorkspaceWatcher_FileDeleted(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"test.md": "content",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	var deletedPath string
 	var wg sync.WaitGroup
@@ -222,10 +222,10 @@ func TestWorkspaceWatcher_ShouldIgnore(t *testing.T) {
 }
 
 func TestWorkspaceWatcher_Debouncing(t *testing.T) {
-	ws := CreateTempWorkspace(t, map[string]string{
+	ws := createTempWorkspace(t, map[string]string{
 		"test.md": "initial",
 	})
-	defer ws.Cleanup(t)
+	defer ws.cleanup(t)
 
 	changeCount := 0
 	var mu sync.Mutex

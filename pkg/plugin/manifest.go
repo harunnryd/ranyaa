@@ -128,12 +128,3 @@ func (m *ManifestLoader) validateManifest(manifest *PluginManifest) error {
 
 	return nil
 }
-
-// ParseManifest parses a manifest from JSON bytes (for testing)
-func ParseManifest(data []byte) (*PluginManifest, error) {
-	var manifest PluginManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest JSON: %w", err)
-	}
-	return &manifest, nil
-}
