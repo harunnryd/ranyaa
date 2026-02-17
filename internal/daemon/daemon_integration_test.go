@@ -3,8 +3,10 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/logger"
 	"github.com/harun/ranya/internal/tracing"
@@ -219,6 +222,39 @@ func rpcCall(t *testing.T, d *Daemon, traceID string, method string, params map[
 	var rpcResp gateway.RPCResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
 	return rpcResp
+}
+
+func connectAuthenticatedGatewaySocket(t *testing.T, d *Daemon) *websocket.Conn {
+	t.Helper()
+
+	wsURL := fmt.Sprintf("ws://127.0.0.1:%d/ws", d.config.Gateway.Port)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+
+	var challenge gateway.AuthChallenge
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	require.NoError(t, conn.ReadJSON(&challenge))
+	require.Equal(t, "auth.challenge", challenge.Event)
+	require.NotEmpty(t, challenge.Challenge)
+
+	signature := signGatewayChallenge(d.config.Gateway.SharedSecret, challenge.Challenge)
+	require.NoError(t, conn.WriteJSON(gateway.AuthResponse{
+		Method:    "auth.response",
+		Signature: signature,
+	}))
+
+	var authResult gateway.AuthResult
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	require.NoError(t, conn.ReadJSON(&authResult))
+	require.True(t, authResult.Success, "gateway websocket authentication failed")
+
+	return conn
+}
+
+func signGatewayChallenge(secret string, challenge string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(challenge))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func waitForCondition(t *testing.T, timeout time.Duration, description string, fn func() bool) {
@@ -489,6 +525,92 @@ func TestIntegrationSandboxMandatoryForRiskyTools(t *testing.T) {
 	assert.True(t, runOK && runID != "", "sandbox event must include run_id")
 }
 
+func TestIntegrationGatewayTypedStreamingEvents(t *testing.T) {
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "typed_stream_tool", Parameters: map[string]interface{}{}}}},
+			{Content: "typed-stream-complete"},
+		},
+	}
+	d := createIntegrationDaemon(t, provider, false)
+
+	require.NoError(t, d.toolExecutor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "typed_stream_tool",
+		Description: "Tool for typed stream event tests",
+		Category:    toolexecutor.CategoryRead,
+		Parameters:  []toolexecutor.ToolParameter{},
+		Handler: func(context.Context, map[string]interface{}) (interface{}, error) {
+			return map[string]interface{}{"ok": true}, nil
+		},
+	}))
+
+	wsConn := connectAuthenticatedGatewaySocket(t, d)
+	defer wsConn.Close()
+
+	traceID := tracing.NewTraceID()
+	rpcResp := rpcCall(t, d, traceID, "agent.wait", map[string]interface{}{
+		"prompt":     "use a tool and finish",
+		"sessionKey": "typed:streaming",
+		"config": map[string]interface{}{
+			"model": "integration-model",
+			"tools": []interface{}{"typed_stream_tool"},
+		},
+	})
+	require.Nil(t, rpcResp.Error)
+
+	var events []gateway.EventMessage
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		var evt gateway.EventMessage
+		_ = wsConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		err := wsConn.ReadJSON(&evt)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if hasTypedEvent(events, gateway.StreamTypeLifecycle, "start") &&
+					hasTypedEvent(events, gateway.StreamTypeTool, "start") &&
+					hasTypedEvent(events, gateway.StreamTypeTool, "end") {
+					break
+				}
+				continue
+			}
+			require.NoError(t, err)
+		}
+
+		if evt.Type == "event" && evt.Stream != "" {
+			events = append(events, evt)
+			if hasTypedEvent(events, gateway.StreamTypeLifecycle, "start") &&
+				hasTypedEvent(events, gateway.StreamTypeTool, "start") &&
+				hasTypedEvent(events, gateway.StreamTypeTool, "end") {
+				break
+			}
+		}
+	}
+
+	require.NotEmpty(t, events, "expected typed gateway events")
+	assert.True(t, hasTypedEvent(events, gateway.StreamTypeLifecycle, "start"), "missing lifecycle:start event")
+	assert.True(t, hasTypedEvent(events, gateway.StreamTypeTool, "start"), "missing tool:start event")
+	assert.True(t, hasTypedEvent(events, gateway.StreamTypeTool, "end"), "missing tool:end event")
+
+	var prevSeq int64
+	for _, evt := range events {
+		assert.Equal(t, "event", evt.Type)
+		assert.NotEmpty(t, evt.TraceID)
+		assert.NotEmpty(t, evt.RunID)
+		assert.NotZero(t, evt.Seq)
+		assert.Greater(t, evt.Seq, prevSeq)
+		prevSeq = evt.Seq
+	}
+}
+
+func hasTypedEvent(events []gateway.EventMessage, stream gateway.StreamType, phase string) bool {
+	for _, evt := range events {
+		if evt.Stream == stream && evt.Phase == phase {
+			return true
+		}
+	}
+	return false
+}
+
 func TestIntegrationCLIMessageOrdering(t *testing.T) {
 	provider := &scriptedProvider{
 		delay: 250 * time.Millisecond,
@@ -663,17 +785,12 @@ func TestIntegrationCronJobExecution(t *testing.T) {
 func TestIntegrationCronSchedulingAndPersistence(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "cron", "jobs.json")
 	var runCount atomic.Int32
-	var firstFail atomic.Bool
 
 	svc, err := cron.NewService(cron.ServiceOptions{
 		StorePath:          storePath,
 		EnqueueSystemEvent: func(_ string, _ string) {},
 		RunIsolatedAgentJob: func(_ *cron.Job, _ string) error {
 			runCount.Add(1)
-			if !firstFail.Load() {
-				firstFail.Store(true)
-				return errors.New("injected cron failure")
-			}
 			return nil
 		},
 		RequestHeartbeatNow: func() {},

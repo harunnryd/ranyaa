@@ -301,6 +301,37 @@ func (d *Daemon) initializeServices() error {
 	}
 	d.gatewayServer = gatewayServer
 	d.logger.Info().Int("port", d.config.Gateway.Port).Msg("Gateway server initialized")
+	d.agentRunner.SetEventEmitter(agent.EventEmitterFunc(func(ctx context.Context, evt agent.RuntimeEvent) {
+		if d.gatewayServer == nil {
+			return
+		}
+
+		payload := make(map[string]interface{}, len(evt.Metadata)+3)
+		for k, v := range evt.Metadata {
+			payload[k] = v
+		}
+		if evt.ToolName != "" {
+			payload["tool"] = evt.ToolName
+		}
+		if evt.ToolCall != "" {
+			payload["tool_call_id"] = evt.ToolCall
+		}
+		if evt.Content != "" {
+			payload["content"] = evt.Content
+		}
+
+		d.gatewayServer.BroadcastTyped(gateway.EventMessage{
+			Event:     evt.Event,
+			Stream:    gateway.StreamType(evt.Stream),
+			Phase:     evt.Phase,
+			Data:      payload,
+			TraceID:   tracing.GetTraceID(ctx),
+			RunID:     tracing.GetRunID(ctx),
+			Session:   tracing.GetSessionKey(ctx),
+			AgentID:   tracing.GetAgentID(ctx),
+			Timestamp: time.Now().UnixMilli(),
+		})
+	}))
 
 	// 2. Node Manager
 	nodeManager := node.NewNodeManager(node.NodeManagerConfig{
@@ -414,6 +445,9 @@ func (d *Daemon) initializeServices() error {
 			return fmt.Errorf("failed to create telegram bot: %w", err)
 		}
 		d.telegramBot = bot
+		if err := d.configureTelegramApprovalWorkflow(); err != nil {
+			return fmt.Errorf("failed to configure telegram approvals: %w", err)
+		}
 		d.logger.Info().Msg("Telegram bot initialized")
 	}
 

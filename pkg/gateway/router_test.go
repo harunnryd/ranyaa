@@ -77,6 +77,14 @@ func TestRPCRouter_ParseRequest(t *testing.T) {
 		assert.Equal(t, "2.0", req.JSONRPC)
 	})
 
+	t.Run("should parse idempotency key when provided", func(t *testing.T) {
+		data := []byte(`{"id":"1","method":"test.method","idempotencyKey":"idem-1"}`)
+
+		req, err := router.ParseRequest(data)
+		require.NoError(t, err)
+		assert.Equal(t, "idem-1", req.IdempotencyKey)
+	})
+
 	t.Run("should reject malformed JSON", func(t *testing.T) {
 		data := []byte(`{invalid json}`)
 
@@ -189,6 +197,69 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 
 		resp := router.RouteRequest(req)
 		assert.Equal(t, "unique-id-123", resp.ID)
+	})
+
+	t.Run("should deduplicate handler execution by idempotency key", func(t *testing.T) {
+		callCount := 0
+		handler := func(params map[string]interface{}) (interface{}, error) {
+			callCount++
+			return map[string]interface{}{
+				"callCount": callCount,
+			}, nil
+		}
+
+		_ = router.RegisterMethod("test.idempotent", handler)
+
+		first := router.RouteRequest(&RPCRequest{
+			ID:             "req-1",
+			Method:         "test.idempotent",
+			IdempotencyKey: "idem-123",
+			Params: map[string]interface{}{
+				"value": "first",
+			},
+		})
+		second := router.RouteRequest(&RPCRequest{
+			ID:             "req-2",
+			Method:         "test.idempotent",
+			IdempotencyKey: "idem-123",
+			Params: map[string]interface{}{
+				"value": "second",
+			},
+		})
+
+		require.Nil(t, first.Error)
+		require.Nil(t, second.Error)
+		assert.Equal(t, "req-2", second.ID, "cached response should use current request ID")
+		assert.Equal(t, 1, callCount, "handler should run only once for duplicate idempotency key")
+
+		firstResult, ok := first.Result.(map[string]interface{})
+		require.True(t, ok)
+		secondResult, ok := second.Result.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, firstResult["callCount"], secondResult["callCount"], "second response should be cached result")
+	})
+
+	t.Run("should not deduplicate requests without idempotency key", func(t *testing.T) {
+		callCount := 0
+		handler := func(params map[string]interface{}) (interface{}, error) {
+			callCount++
+			return callCount, nil
+		}
+
+		_ = router.RegisterMethod("test.non_idempotent", handler)
+
+		first := router.RouteRequest(&RPCRequest{
+			ID:     "req-1",
+			Method: "test.non_idempotent",
+		})
+		second := router.RouteRequest(&RPCRequest{
+			ID:     "req-2",
+			Method: "test.non_idempotent",
+		})
+
+		require.Nil(t, first.Error)
+		require.Nil(t, second.Error)
+		assert.Equal(t, 2, callCount, "handler should run for each request when key is absent")
 	})
 }
 

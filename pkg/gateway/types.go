@@ -6,12 +6,22 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// StreamType identifies typed runtime streams delivered to gateway clients.
+type StreamType string
+
+const (
+	StreamTypeTool      StreamType = "tool"
+	StreamTypeAssistant StreamType = "assistant"
+	StreamTypeLifecycle StreamType = "lifecycle"
+)
+
 // RPCRequest represents a JSON-RPC 2.0 request
 type RPCRequest struct {
-	ID      string                 `json:"id"`
-	Method  string                 `json:"method"`
-	Params  map[string]interface{} `json:"params,omitempty"`
-	JSONRPC string                 `json:"jsonrpc"`
+	ID             string                 `json:"id"`
+	Method         string                 `json:"method"`
+	Params         map[string]interface{} `json:"params,omitempty"`
+	JSONRPC        string                 `json:"jsonrpc"`
+	IdempotencyKey string                 `json:"idempotencyKey,omitempty"`
 }
 
 // RPCResponse represents a JSON-RPC 2.0 response
@@ -36,9 +46,17 @@ func (e *RPCError) Error() string {
 
 // EventMessage represents a server-initiated event
 type EventMessage struct {
+	Type      string      `json:"type,omitempty"`
 	Event     string      `json:"event"`
+	Stream    StreamType  `json:"stream,omitempty"`
+	Phase     string      `json:"phase,omitempty"`
+	Seq       int64       `json:"seq,omitempty"`
 	Data      interface{} `json:"data"`
 	Timestamp int64       `json:"timestamp"`
+	TraceID   string      `json:"trace_id,omitempty"`
+	RunID     string      `json:"run_id,omitempty"`
+	Session   string      `json:"session_key,omitempty"`
+	AgentID   string      `json:"agent_id,omitempty"`
 }
 
 // AuthChallenge represents an authentication challenge message

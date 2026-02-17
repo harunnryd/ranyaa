@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type Runner struct {
 	memoryManager   *memory.Manager
 	logger          zerolog.Logger
 	providerFactory ProviderCreator
+	eventEmitter    EventEmitter
 
 	// Auth profiles
 	authProfiles []AuthProfile
@@ -44,6 +46,7 @@ type Config struct {
 	Logger          zerolog.Logger
 	AuthProfiles    []AuthProfile
 	ProviderFactory ProviderCreator
+	EventEmitter    EventEmitter
 }
 
 // ProviderCreator creates LLM providers from auth profiles.
@@ -80,6 +83,7 @@ func NewRunner(cfg Config) (*Runner, error) {
 		memoryManager:   cfg.MemoryManager,
 		logger:          cfg.Logger,
 		providerFactory: providerFactory,
+		eventEmitter:    cfg.EventEmitter,
 		authProfiles:    cfg.AuthProfiles,
 		activeRuns:      make(map[string]context.CancelFunc),
 	}, nil
@@ -113,9 +117,25 @@ func (r *Runner) RunWithContext(ctx context.Context, params AgentRunParams) (Age
 	)
 	defer span.End()
 	logger := tracing.LoggerFromContext(ctx, r.logger).With().Str("session_key", params.SessionKey).Logger()
+	r.emitRuntimeEvent(ctx, RuntimeEvent{
+		Event:  "lifecycle",
+		Stream: RuntimeStreamLifecycle,
+		Phase:  "start",
+		Metadata: map[string]interface{}{
+			"session_key": params.SessionKey,
+		},
+	})
 
 	// Validate configuration
 	if err := r.validateConfig(params.Config); err != nil {
+		r.emitRuntimeEvent(ctx, RuntimeEvent{
+			Event:  "lifecycle",
+			Stream: RuntimeStreamLifecycle,
+			Phase:  "error",
+			Metadata: map[string]interface{}{
+				"error": err.Error(),
+			},
+		})
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return AgentResult{}, fmt.Errorf("invalid configuration: %w", err)
@@ -129,13 +149,31 @@ func (r *Runner) RunWithContext(ctx context.Context, params AgentRunParams) (Age
 	}, nil)
 
 	if err != nil {
+		r.emitRuntimeEvent(ctx, RuntimeEvent{
+			Event:  "lifecycle",
+			Stream: RuntimeStreamLifecycle,
+			Phase:  "error",
+			Metadata: map[string]interface{}{
+				"error": err.Error(),
+			},
+		})
 		logger.Error().Err(err).Msg("Agent run failed before execution")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return AgentResult{}, err
 	}
 
-	return result.(AgentResult), nil
+	finalResult := result.(AgentResult)
+	r.emitRuntimeEvent(ctx, RuntimeEvent{
+		Event:  "lifecycle",
+		Stream: RuntimeStreamLifecycle,
+		Phase:  "end",
+		Metadata: map[string]interface{}{
+			"aborted": finalResult.Aborted,
+		},
+	})
+
+	return finalResult, nil
 }
 
 // Abort cancels a running agent execution
@@ -573,6 +611,14 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 
 		// No tool calls - we're done
 		if len(response.ToolCalls) == 0 {
+			if strings.TrimSpace(response.Content) != "" {
+				r.emitRuntimeEvent(ctx, RuntimeEvent{
+					Event:   "assistant",
+					Stream:  RuntimeStreamAssistant,
+					Phase:   "output",
+					Content: response.Content,
+				})
+			}
 			return AgentResult{
 				Response:  response.Content,
 				ToolCalls: allToolCalls,
@@ -583,6 +629,14 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 		// Execute tool calls
 		toolResults := []ToolResult{}
 		for _, toolCall := range response.ToolCalls {
+			r.emitRuntimeEvent(ctx, RuntimeEvent{
+				Event:    "tool",
+				Stream:   RuntimeStreamTool,
+				Phase:    "start",
+				ToolName: toolCall.Name,
+				ToolCall: toolCall.ID,
+			})
+
 			result := r.toolExecutor.Execute(
 				ctx,
 				toolCall.Name,
@@ -601,6 +655,21 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 				ToolCallID: toolCall.ID,
 				Output:     fmt.Sprintf("%v", result.Output),
 				Error:      result.Error,
+			})
+
+			toolMeta := map[string]interface{}{
+				"success": result.Success,
+			}
+			if result.Error != "" {
+				toolMeta["error"] = result.Error
+			}
+			r.emitRuntimeEvent(ctx, RuntimeEvent{
+				Event:    "tool",
+				Stream:   RuntimeStreamTool,
+				Phase:    "end",
+				ToolName: toolCall.Name,
+				ToolCall: toolCall.ID,
+				Metadata: toolMeta,
 			})
 		}
 
@@ -628,6 +697,18 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 	}
 
 	return AgentResult{}, fmt.Errorf("maximum tool execution turns exceeded")
+}
+
+func (r *Runner) emitRuntimeEvent(ctx context.Context, event RuntimeEvent) {
+	if r.eventEmitter == nil {
+		return
+	}
+	r.eventEmitter.Emit(ctx, event)
+}
+
+// SetEventEmitter configures runtime event emission for the runner.
+func (r *Runner) SetEventEmitter(emitter EventEmitter) {
+	r.eventEmitter = emitter
 }
 
 // callLLMWithRetry calls LLM with exponential backoff retry

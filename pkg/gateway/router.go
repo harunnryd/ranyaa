@@ -4,18 +4,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // RPCRouter handles RPC method registration and request routing
 type RPCRouter struct {
-	mu      sync.RWMutex
-	methods map[string]RequestHandler
+	mu               sync.RWMutex
+	methods          map[string]RequestHandler
+	idempotencyTTL   time.Duration
+	idempotencyCache map[string]cachedRPCResponse
+}
+
+type cachedRPCResponse struct {
+	response  RPCResponse
+	expiresAt time.Time
 }
 
 // NewRPCRouter creates a new RPC router
 func NewRPCRouter() *RPCRouter {
 	return &RPCRouter{
-		methods: make(map[string]RequestHandler),
+		methods:          make(map[string]RequestHandler),
+		idempotencyTTL:   5 * time.Minute,
+		idempotencyCache: make(map[string]cachedRPCResponse),
 	}
 }
 
@@ -76,6 +86,25 @@ func (r *RPCRouter) ParseRequest(data []byte) (*RPCRequest, error) {
 
 // RouteRequest routes a request to the appropriate handler
 func (r *RPCRouter) RouteRequest(req *RPCRequest) *RPCResponse {
+	if req == nil {
+		return &RPCResponse{
+			ID:      "",
+			JSONRPC: "2.0",
+			Error: &RPCError{
+				Code:    InvalidRequest,
+				Message: "invalid request",
+			},
+		}
+	}
+
+	cacheKey := idempotencyCacheKey(req.Method, req.IdempotencyKey)
+	if cacheKey != "" {
+		if cached, ok := r.getCachedResponse(cacheKey); ok {
+			cached.ID = req.ID
+			return &cached
+		}
+	}
+
 	r.mu.RLock()
 	handler, exists := r.methods[req.Method]
 	r.mu.RUnlock()
@@ -93,8 +122,9 @@ func (r *RPCRouter) RouteRequest(req *RPCRequest) *RPCResponse {
 
 	// Execute handler
 	result, err := handler(req.Params)
+	var response *RPCResponse
 	if err != nil {
-		return &RPCResponse{
+		response = &RPCResponse{
 			ID:      req.ID,
 			JSONRPC: "2.0",
 			Error: &RPCError{
@@ -102,13 +132,19 @@ func (r *RPCRouter) RouteRequest(req *RPCRequest) *RPCResponse {
 				Message: err.Error(),
 			},
 		}
+	} else {
+		response = &RPCResponse{
+			ID:      req.ID,
+			JSONRPC: "2.0",
+			Result:  result,
+		}
 	}
 
-	return &RPCResponse{
-		ID:      req.ID,
-		JSONRPC: "2.0",
-		Result:  result,
+	if cacheKey != "" {
+		r.cacheResponse(cacheKey, *response)
 	}
+
+	return response
 }
 
 // HasMethod checks if a method is registered
@@ -130,4 +166,61 @@ func (r *RPCRouter) GetMethods() []string {
 		methods = append(methods, name)
 	}
 	return methods
+}
+
+func idempotencyCacheKey(method string, idempotencyKey string) string {
+	if idempotencyKey == "" {
+		return ""
+	}
+	return method + ":" + idempotencyKey
+}
+
+func (r *RPCRouter) getCachedResponse(key string) (RPCResponse, bool) {
+	r.mu.RLock()
+	entry, exists := r.idempotencyCache[key]
+	r.mu.RUnlock()
+	if !exists {
+		return RPCResponse{}, false
+	}
+
+	now := time.Now()
+	if now.After(entry.expiresAt) {
+		r.mu.Lock()
+		if current, ok := r.idempotencyCache[key]; ok && now.After(current.expiresAt) {
+			delete(r.idempotencyCache, key)
+		}
+		r.mu.Unlock()
+		return RPCResponse{}, false
+	}
+
+	return cloneRPCResponse(entry.response), true
+}
+
+func (r *RPCRouter) cacheResponse(key string, response RPCResponse) {
+	now := time.Now()
+
+	r.mu.Lock()
+	r.idempotencyCache[key] = cachedRPCResponse{
+		response:  cloneRPCResponse(response),
+		expiresAt: now.Add(r.idempotencyTTL),
+	}
+	for cacheKey, entry := range r.idempotencyCache {
+		if now.After(entry.expiresAt) {
+			delete(r.idempotencyCache, cacheKey)
+		}
+	}
+	r.mu.Unlock()
+}
+
+func cloneRPCResponse(src RPCResponse) RPCResponse {
+	cloned := RPCResponse{
+		ID:      src.ID,
+		Result:  src.Result,
+		JSONRPC: src.JSONRPC,
+	}
+	if src.Error != nil {
+		errCopy := *src.Error
+		cloned.Error = &errCopy
+	}
+	return cloned
 }

@@ -29,6 +29,11 @@ type ApprovalHandler interface {
 	RequestApproval(ctx context.Context, req ApprovalRequest) (ApprovalResponse, error)
 }
 
+// ApprovalResolver handles asynchronous approval decisions.
+type ApprovalResolver interface {
+	ResolveApproval(id string, action ApprovalAction, actor string) error
+}
+
 // ApprovalManager manages the approval workflow
 type ApprovalManager struct {
 	handler        ApprovalHandler
@@ -125,4 +130,18 @@ func (am *ApprovalManager) GetDefaultTimeout() time.Duration {
 // SetHandler sets the approval handler
 func (am *ApprovalManager) SetHandler(handler ApprovalHandler) {
 	am.handler = handler
+}
+
+// ResolveApproval resolves a pending approval request by ID.
+func (am *ApprovalManager) ResolveApproval(id string, action ApprovalAction, actor string) error {
+	if am.handler == nil {
+		return fmt.Errorf("no approval handler configured")
+	}
+
+	resolver, ok := am.handler.(ApprovalResolver)
+	if !ok {
+		return fmt.Errorf("approval handler does not support asynchronous resolution")
+	}
+
+	return resolver.ResolveApproval(id, action, actor)
 }

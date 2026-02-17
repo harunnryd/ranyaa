@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -781,4 +782,99 @@ func TestStop(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "stopped")
 	})
+}
+
+func TestCalculateRetryBackoff(t *testing.T) {
+	t.Run("returns zero for non-error state", func(t *testing.T) {
+		assert.Equal(t, time.Duration(0), calculateRetryBackoff(Schedule{Kind: ScheduleKindEvery}, 0))
+	})
+
+	t.Run("returns zero for one-shot schedules", func(t *testing.T) {
+		assert.Equal(t, time.Duration(0), calculateRetryBackoff(Schedule{Kind: ScheduleKindAt}, 3))
+	})
+
+	t.Run("uses expected progression and caps at max", func(t *testing.T) {
+		schedule := Schedule{Kind: ScheduleKindEvery}
+		assert.Equal(t, 30*time.Second, calculateRetryBackoff(schedule, 1))
+		assert.Equal(t, 1*time.Minute, calculateRetryBackoff(schedule, 2))
+		assert.Equal(t, 5*time.Minute, calculateRetryBackoff(schedule, 3))
+		assert.Equal(t, 15*time.Minute, calculateRetryBackoff(schedule, 4))
+		assert.Equal(t, 60*time.Minute, calculateRetryBackoff(schedule, 5))
+		assert.Equal(t, 60*time.Minute, calculateRetryBackoff(schedule, 8))
+	})
+}
+
+func TestRunJobAppliesRetryBackoffAndResetsOnSuccess(t *testing.T) {
+	tempDir := t.TempDir()
+	storePath := filepath.Join(tempDir, "jobs.json")
+	callbacks := newMockCallbacks()
+
+	var failCount int
+	service, err := NewService(ServiceOptions{
+		StorePath:          storePath,
+		CronEnabled:        true,
+		DefaultAgentID:     "test-agent",
+		EnqueueSystemEvent: callbacks.enqueueSystemEvent,
+		RunIsolatedAgentJob: func(_ *Job, _ string) error {
+			if failCount < 1 {
+				failCount++
+				return fmt.Errorf("injected failure")
+			}
+			return nil
+		},
+		RequestHeartbeatNow: callbacks.requestHeartbeatNow,
+		OnEvent:             callbacks.onEvent,
+	})
+	require.NoError(t, err)
+	defer service.Stop()
+
+	job, err := service.AddJob(AddParams{
+		Name:    "backoff-test",
+		Enabled: true,
+		Schedule: Schedule{
+			Kind:    ScheduleKindEvery,
+			EveryMs: 100,
+		},
+		SessionTarget: SessionTargetIsolated,
+		WakeMode:      WakeModeNow,
+		Payload: Payload{
+			Kind:    PayloadKindAgentTurn,
+			Message: "run",
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, service.RunJob(job.ID, RunModeForce))
+	waitForStatus(t, service, job.ID, "error")
+
+	stateAfterError := service.GetJob(job.ID).State
+	require.NotNil(t, stateAfterError.LastRunAtMs)
+	require.NotNil(t, stateAfterError.NextRunAtMs)
+	assert.Equal(t, 1, stateAfterError.ConsecutiveErrors)
+	assert.GreaterOrEqual(
+		t,
+		*stateAfterError.NextRunAtMs-*stateAfterError.LastRunAtMs,
+		int64((30*time.Second)/time.Millisecond),
+	)
+
+	require.NoError(t, service.RunJob(job.ID, RunModeForce))
+	waitForStatus(t, service, job.ID, "ok")
+
+	stateAfterSuccess := service.GetJob(job.ID).State
+	assert.Equal(t, 0, stateAfterSuccess.ConsecutiveErrors)
+}
+
+func waitForStatus(t *testing.T, service *Service, jobID string, status string) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		job := service.GetJob(jobID)
+		if job != nil && job.State.LastStatus == status && job.State.RunningAtMs == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for job %s status %s", jobID, status)
 }

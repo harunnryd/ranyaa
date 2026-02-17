@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"time"
 
 	"github.com/harun/ranya/pkg/toolexecutor"
@@ -83,6 +84,42 @@ type ToolResult struct {
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output,omitempty"`
 	Error      string `json:"error,omitempty"`
+}
+
+// RuntimeEventStream identifies the runtime stream for agent events.
+type RuntimeEventStream string
+
+const (
+	RuntimeStreamLifecycle RuntimeEventStream = "lifecycle"
+	RuntimeStreamTool      RuntimeEventStream = "tool"
+	RuntimeStreamAssistant RuntimeEventStream = "assistant"
+)
+
+// RuntimeEvent captures runtime updates emitted by the agent runner.
+type RuntimeEvent struct {
+	Event    string                 `json:"event"`
+	Stream   RuntimeEventStream     `json:"stream"`
+	Phase    string                 `json:"phase,omitempty"`
+	ToolName string                 `json:"tool_name,omitempty"`
+	ToolCall string                 `json:"tool_call,omitempty"`
+	Content  string                 `json:"content,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// EventEmitter receives runtime events from the agent runner.
+type EventEmitter interface {
+	Emit(ctx context.Context, event RuntimeEvent)
+}
+
+// EventEmitterFunc adapts a function into an EventEmitter.
+type EventEmitterFunc func(ctx context.Context, event RuntimeEvent)
+
+// Emit dispatches an event using the wrapped function.
+func (f EventEmitterFunc) Emit(ctx context.Context, event RuntimeEvent) {
+	if f == nil {
+		return
+	}
+	f(ctx, event)
 }
 
 // DefaultConfig returns default agent configuration

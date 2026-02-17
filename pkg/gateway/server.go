@@ -452,6 +452,11 @@ func (s *Server) Broadcast(event string, data interface{}) {
 	s.broadcaster.Broadcast(event, data)
 }
 
+// BroadcastTyped broadcasts a typed stream event to authenticated clients.
+func (s *Server) BroadcastTyped(msg EventMessage) {
+	s.broadcaster.BroadcastTyped(msg)
+}
+
 // RegisterMethod registers an RPC method handler
 func (s *Server) RegisterMethod(name string, handler RequestHandler) error {
 	return s.router.RegisterMethod(name, handler)

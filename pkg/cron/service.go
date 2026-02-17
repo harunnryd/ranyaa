@@ -13,6 +13,14 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+var retryBackoffSchedule = []time.Duration{
+	30 * time.Second,
+	1 * time.Minute,
+	5 * time.Minute,
+	15 * time.Minute,
+	60 * time.Minute,
+}
+
 // Service manages cron job scheduling and execution
 type Service struct {
 	jobs    map[string]*Job
@@ -489,6 +497,19 @@ func (s *Service) executeJob(job *Job) {
 	if calcErr != nil {
 		log.Error().Str("jobId", job.ID).Err(calcErr).Msg("Failed to calculate next run")
 	} else {
+		backoff := calculateRetryBackoff(currentJob.Schedule, currentJob.State.ConsecutiveErrors)
+		if backoff > 0 {
+			backoffMs := backoff.Milliseconds()
+			minNextRunAtMs := endMs + backoffMs
+			if nextRunAtMs < minNextRunAtMs {
+				nextRunAtMs = minNextRunAtMs
+			}
+			log.Warn().
+				Str("jobId", job.ID).
+				Int("consecutiveErrors", currentJob.State.ConsecutiveErrors).
+				Int64("backoffMs", backoffMs).
+				Msg("Applying cron retry backoff")
+		}
 		currentJob.State.NextRunAtMs = Int64Ptr(nextRunAtMs)
 	}
 
@@ -526,6 +547,27 @@ func (s *Service) executeJob(job *Job) {
 	if currentJob.Enabled && calcErr == nil {
 		s.scheduleJobLocked(currentJob)
 	}
+}
+
+func calculateRetryBackoff(schedule Schedule, consecutiveErrors int) time.Duration {
+	if consecutiveErrors <= 0 {
+		return 0
+	}
+
+	// Backoff applies only to recurring schedules.
+	if schedule.Kind != ScheduleKindEvery && schedule.Kind != ScheduleKindCron {
+		return 0
+	}
+
+	index := consecutiveErrors - 1
+	if index < 0 {
+		return 0
+	}
+	if index >= len(retryBackoffSchedule) {
+		index = len(retryBackoffSchedule) - 1
+	}
+
+	return retryBackoffSchedule[index]
 }
 
 // loadJobs loads jobs from storage
