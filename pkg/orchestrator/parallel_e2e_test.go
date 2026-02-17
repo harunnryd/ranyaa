@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ func TestParallelExecutor_E2E_CompleteWorkflow(t *testing.T) {
 
 	// Create a realistic agent runner that simulates LLM execution
 	executionLog := make([]string, 0)
+	var executionLogMu sync.Mutex
 	runner := &mockAgentRunner{
 		runFunc: func(ctx context.Context, params AgentRunParams) (AgentResult, error) {
 			// Simulate realistic execution time
@@ -31,7 +33,9 @@ func TestParallelExecutor_E2E_CompleteWorkflow(t *testing.T) {
 			select {
 			case <-time.After(executionTime):
 				// Log execution
+				executionLogMu.Lock()
 				executionLog = append(executionLog, params.SessionKey)
+				executionLogMu.Unlock()
 
 				// Return result based on role
 				var output interface{}
@@ -173,10 +177,14 @@ func TestParallelExecutor_E2E_CompleteWorkflow(t *testing.T) {
 	assert.Less(t, duration, 50*time.Millisecond, "parallel execution should be faster than sequential")
 
 	// Verify all agents executed
-	assert.Len(t, executionLog, 3, "should have 3 execution logs")
+	executionLogMu.Lock()
+	logEntries := append([]string(nil), executionLog...)
+	executionLogMu.Unlock()
+
+	assert.Len(t, logEntries, 3, "should have 3 execution logs")
 
 	// Verify session keys are properly formatted
-	for _, sessionKey := range executionLog {
+	for _, sessionKey := range logEntries {
 		assert.Contains(t, sessionKey, "captain-session-123:sub:", "session key should contain parent session")
 	}
 

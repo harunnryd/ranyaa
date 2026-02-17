@@ -223,6 +223,12 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 		return AgentResult{}, err
 	}
 
+	// Aborted runs may legitimately not have assistant content to persist.
+	if result.Aborted {
+		result.SessionKey = params.SessionKey
+		return result, nil
+	}
+
 	// Save assistant response
 	if err := r.sessionManager.AppendMessageWithContext(execCtx, params.SessionKey, session.Message{
 		Role:    "assistant",

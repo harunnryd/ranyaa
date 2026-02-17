@@ -538,8 +538,8 @@ func (s *Server) RegisterWebhook(config WebhookConfig) error {
 		Str("method", config.Method).
 		Msg("Webhook registered")
 
-	// Save registry
-	go s.saveRegistry()
+	// Save registry synchronously to avoid test/process shutdown races.
+	s.saveRegistry()
 
 	return nil
 }
@@ -560,8 +560,8 @@ func (s *Server) UnregisterWebhook(path string, method string) bool {
 			Str("method", method).
 			Msg("Webhook unregistered")
 
-		// Save registry
-		go s.saveRegistry()
+		// Save registry synchronously to avoid test/process shutdown races.
+		s.saveRegistry()
 	}
 
 	return exists

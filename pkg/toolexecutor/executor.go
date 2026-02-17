@@ -407,6 +407,60 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		timeout = execCtx.Timeout
 	}
 
+	// Enforce plugin approval workflow for sensitive plugin tools.
+	if tool.PluginID != "" && te.requiresApproval(tool) {
+		te.mu.RLock()
+		approvalManager := te.approvalManager
+		te.mu.RUnlock()
+
+		if approvalManager != nil {
+			approvalReq := ApprovalRequest{
+				Command: toolName,
+				Cwd:     "",
+				Context: map[string]string{
+					"plugin": tool.PluginID,
+					"tool":   toolName,
+				},
+			}
+			if execCtx != nil {
+				approvalReq.Cwd = execCtx.WorkingDir
+				approvalReq.AgentID = execCtx.AgentID
+			}
+
+			approved, approvalErr := approvalManager.RequestApproval(ctx, approvalReq)
+			if approvalErr != nil {
+				duration := time.Since(startTime)
+				observability.RecordToolExecution(toolName, duration, false)
+				span.RecordError(approvalErr)
+				span.SetStatus(codes.Error, "plugin tool approval failed")
+				return ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("plugin tool approval failed: %v", approvalErr),
+					Metadata: map[string]interface{}{
+						"duration":        duration.Milliseconds(),
+						"plugin":          tool.PluginID,
+						"approval_failed": true,
+					},
+				}
+			}
+
+			if !approved {
+				duration := time.Since(startTime)
+				observability.RecordToolExecution(toolName, duration, false)
+				span.SetStatus(codes.Error, "plugin tool execution denied by user")
+				return ToolResult{
+					Success: false,
+					Error:   "plugin tool execution denied by user",
+					Metadata: map[string]interface{}{
+						"duration":        duration.Milliseconds(),
+						"plugin":          tool.PluginID,
+						"approval_denied": true,
+					},
+				}
+			}
+		}
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -444,6 +498,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Truncated: truncated,
 			Metadata: map[string]interface{}{
 				"duration": duration.Milliseconds(),
+				"plugin":   tool.PluginID,
 			},
 		}
 
@@ -464,6 +519,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Error:   err.Error(),
 			Metadata: map[string]interface{}{
 				"duration": duration.Milliseconds(),
+				"plugin":   tool.PluginID,
 			},
 		}
 
@@ -483,6 +539,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Error:   fmt.Sprintf("tool execution timeout after %v", timeout),
 			Metadata: map[string]interface{}{
 				"duration": duration.Milliseconds(),
+				"plugin":   tool.PluginID,
 			},
 		}
 	}
