@@ -262,12 +262,10 @@ func (pc *ProfileContext) Navigate(ctx context.Context, targetID string, params 
 		return nil, err
 	}
 
-	// Validate timeout
-	if params.Timeout > 0 {
-		if err := ValidateNavigationTimeout(params.Timeout); err != nil {
-			pc.metrics.Errors++
-			return nil, err
-		}
+	// Validate navigation parameters
+	if err := ValidateNavigationParams(params); err != nil {
+		pc.metrics.Errors++
+		return nil, err
 	}
 
 	page, err := pc.session.GetPage(targetID)

@@ -189,6 +189,12 @@ func (d *Daemon) initializeCoreModules() error {
 	d.browserContext = browserContext
 	d.logger.Info().Msg("Browser context initialized")
 
+	// Register browser tools with tool executor
+	if err := browser.RegisterBrowserTools(d.toolExecutor, d.browserContext); err != nil {
+		return fmt.Errorf("failed to register browser tools: %w", err)
+	}
+	d.logger.Info().Msg("Browser tools registered")
+
 	// 11. Plugin Runtime
 	pluginRuntime := plugin.NewPluginRuntime(d.logger.GetZerolog(), plugin.PluginRuntimeConfig{
 		BuiltinDir:    d.config.DataDir + "/plugins/builtin",
@@ -207,6 +213,11 @@ func (d *Daemon) initializeCoreModules() error {
 			Msg("Plugin runtime initialized")
 	}
 	d.pluginRuntime = pluginRuntime
+
+	// Register plugin tools with tool executor
+	if err := d.registerPluginTools(); err != nil {
+		d.logger.Warn().Err(err).Msg("Failed to register plugin tools")
+	}
 
 	// 12. Orchestrator
 	d.orchestrator = orchestrator.New(
@@ -346,6 +357,110 @@ func convertAuthProfiles(profiles []config.AIProfile) []agent.AuthProfile {
 			Priority: p.Priority,
 		}
 	}
+	return result
+}
+
+// registerPluginTools registers all plugin tools with the tool executor
+func (d *Daemon) registerPluginTools() error {
+	if d.pluginRuntime == nil {
+		return nil
+	}
+
+	// Create adapter for plugin runtime
+	adapter := plugin.NewToolExecutorAdapter(d.pluginRuntime)
+
+	// Get all plugin tools
+	pluginTools := adapter.GetAllPluginTools()
+
+	if len(pluginTools) == 0 {
+		d.logger.Debug().Msg("No plugin tools to register")
+		return nil
+	}
+
+	// Register each plugin tool
+	registered := 0
+	failed := 0
+
+	for _, pluginTool := range pluginTools {
+		// Convert plugin ToolDefinition to toolexecutor ToolDefinition
+		// We need to convert the Parameters from map[string]any to []ToolParameter
+		params := convertPluginToolParameters(pluginTool.Tool.Parameters)
+
+		toolDef := toolexecutor.ToolDefinition{
+			Name:        pluginTool.Tool.Name,
+			Description: pluginTool.Tool.Description,
+			Parameters:  params,
+		}
+
+		// Register with conflict resolution
+		if err := d.toolExecutor.RegisterPluginTool(pluginTool.PluginID, toolDef, adapter); err != nil {
+			d.logger.Warn().
+				Err(err).
+				Str("plugin", pluginTool.PluginID).
+				Str("tool", pluginTool.Tool.Name).
+				Msg("Failed to register plugin tool")
+			failed++
+			continue
+		}
+
+		registered++
+	}
+
+	d.logger.Info().
+		Int("registered", registered).
+		Int("failed", failed).
+		Int("total", len(pluginTools)).
+		Msg("Plugin tools registered with tool executor")
+
+	return nil
+}
+
+// convertPluginToolParameters converts plugin tool parameters to toolexecutor parameters
+func convertPluginToolParameters(params map[string]any) []toolexecutor.ToolParameter {
+	// Plugin tools use JSON Schema format in params
+	// We need to extract properties and required fields
+	var result []toolexecutor.ToolParameter
+
+	properties, ok := params["properties"].(map[string]any)
+	if !ok {
+		return result
+	}
+
+	required := make(map[string]bool)
+	if reqList, ok := params["required"].([]any); ok {
+		for _, r := range reqList {
+			if name, ok := r.(string); ok {
+				required[name] = true
+			}
+		}
+	}
+
+	for name, propData := range properties {
+		prop, ok := propData.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		param := toolexecutor.ToolParameter{
+			Name:     name,
+			Required: required[name],
+		}
+
+		if typeVal, ok := prop["type"].(string); ok {
+			param.Type = typeVal
+		}
+
+		if desc, ok := prop["description"].(string); ok {
+			param.Description = desc
+		}
+
+		if def, ok := prop["default"]; ok {
+			param.Default = def
+		}
+
+		result = append(result, param)
+	}
+
 	return result
 }
 

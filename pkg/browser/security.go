@@ -173,6 +173,33 @@ func ValidateNavigationTimeout(timeout int) error {
 	return nil
 }
 
+// ValidateNavigationParams validates navigation parameters
+func ValidateNavigationParams(params NavigateParams) error {
+	// Validate wait condition
+	if params.WaitUntil != "" {
+		validWaitConditions := map[string]bool{
+			"load":             true,
+			"domcontentloaded": true,
+			"networkidle":      true,
+		}
+		if !validWaitConditions[params.WaitUntil] {
+			return &BrowserError{
+				Code:    ErrCodeValidation,
+				Message: fmt.Sprintf("Invalid wait condition: %s (must be 'load', 'domcontentloaded', or 'networkidle')", params.WaitUntil),
+			}
+		}
+	}
+
+	// Validate timeout
+	if params.Timeout > 0 {
+		if err := ValidateNavigationTimeout(params.Timeout); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ValidateScreenshotParams validates screenshot parameters
 func ValidateScreenshotParams(params ScreenshotParams) error {
 	// Validate format
@@ -238,6 +265,56 @@ func ValidateExecuteParams(params ExecuteParams) error {
 		return &BrowserError{
 			Code:    ErrCodeValidation,
 			Message: fmt.Sprintf("Script timeout must be <= 120 seconds, got %d", params.Timeout),
+		}
+	}
+
+	// Security validation for script content
+	if err := ValidateScriptSecurity(params.Script); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ValidateScriptSecurity validates JavaScript code for security concerns
+func ValidateScriptSecurity(script string) error {
+	lowerScript := strings.ToLower(script)
+
+	// Check for dangerous patterns that could be used for malicious purposes
+	dangerousPatterns := []struct {
+		pattern string
+		reason  string
+	}{
+		{"eval(", "eval() can execute arbitrary code"},
+		{"function(", "Function constructor can execute arbitrary code"},
+		{"settimeout", "setTimeout can be used for timing attacks"},
+		{"setinterval", "setInterval can be used for timing attacks"},
+		{"import(", "Dynamic imports can load external code"},
+		{"<script", "Script tags are not allowed"},
+		{"</script", "Script tags are not allowed"},
+		{"javascript:", "javascript: protocol is not allowed"},
+		{"data:", "data: URLs can contain executable code"},
+		{"vbscript:", "vbscript: protocol is not allowed"},
+		{"file:", "file: protocol is not allowed"},
+	}
+
+	for _, dp := range dangerousPatterns {
+		if strings.Contains(lowerScript, dp.pattern) {
+			return &BrowserError{
+				Code:    ErrCodeSecurity,
+				Message: fmt.Sprintf("Script contains potentially dangerous pattern: %s", dp.reason),
+				Details: map[string]interface{}{
+					"pattern": dp.pattern,
+				},
+			}
+		}
+	}
+
+	// Check script length (prevent extremely large scripts)
+	if len(script) > 100000 { // 100KB limit
+		return &BrowserError{
+			Code:    ErrCodeValidation,
+			Message: fmt.Sprintf("Script is too large: %d bytes (max 100000)", len(script)),
 		}
 	}
 

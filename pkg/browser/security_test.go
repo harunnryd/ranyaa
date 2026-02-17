@@ -196,6 +196,98 @@ func TestValidateNavigationTimeout(t *testing.T) {
 	}
 }
 
+func TestValidateNavigationParams(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  NavigateParams
+		wantErr bool
+	}{
+		{
+			name: "valid params with load",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   30,
+				WaitUntil: "load",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid params with domcontentloaded",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   30,
+				WaitUntil: "domcontentloaded",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid params with networkidle",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   30,
+				WaitUntil: "networkidle",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid params without waitUntil",
+			params: NavigateParams{
+				URL:     "https://example.com",
+				Timeout: 30,
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid waitUntil",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   30,
+				WaitUntil: "invalid",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid timeout too low",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   3,
+				WaitUntil: "load",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid timeout too high",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   150,
+				WaitUntil: "load",
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid params with zero timeout",
+			params: NavigateParams{
+				URL:       "https://example.com",
+				Timeout:   0,
+				WaitUntil: "load",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateNavigationParams(tt.params)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.IsType(t, &BrowserError{}, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidateScreenshotParams(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -296,6 +388,41 @@ func TestValidateExecuteParams(t *testing.T) {
 			name:    "timeout too high",
 			params:  ExecuteParams{Script: "return 1", Timeout: 200},
 			wantErr: true,
+		},
+		{
+			name:    "script with eval",
+			params:  ExecuteParams{Script: "eval('malicious code')"},
+			wantErr: true,
+		},
+		{
+			name:    "script with Function constructor",
+			params:  ExecuteParams{Script: "new Function('return 1')()"},
+			wantErr: true,
+		},
+		{
+			name:    "script with setTimeout",
+			params:  ExecuteParams{Script: "setTimeout(() => {}, 1000)"},
+			wantErr: true,
+		},
+		{
+			name:    "script with dynamic import",
+			params:  ExecuteParams{Script: "import('module')"},
+			wantErr: true,
+		},
+		{
+			name:    "script with script tag",
+			params:  ExecuteParams{Script: "<script>alert('xss')</script>"},
+			wantErr: true,
+		},
+		{
+			name:    "script with javascript protocol",
+			params:  ExecuteParams{Script: "javascript:alert('xss')"},
+			wantErr: true,
+		},
+		{
+			name:    "valid complex script",
+			params:  ExecuteParams{Script: "const x = document.querySelector('.test'); return x.textContent;"},
+			wantErr: false,
 		},
 	}
 

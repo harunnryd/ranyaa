@@ -14,6 +14,9 @@ type Plugin interface {
 	// Deactivate is called when the plugin is unloaded
 	Deactivate(ctx context.Context) error
 
+	// GetTools returns all tools registered by this plugin
+	GetTools(ctx context.Context) ([]ToolDefinition, error)
+
 	// ExecuteTool executes a registered tool
 	ExecuteTool(ctx context.Context, name string, params map[string]any) (map[string]any, error)
 

@@ -213,6 +213,34 @@ func (r *ToolRegistry) Get(name string) (*RegisteredTool, bool) {
 	return tool, exists
 }
 
+// GetByPlugin retrieves all tools registered by a plugin
+func (r *ToolRegistry) GetByPlugin(pluginID string) []ToolDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var tools []ToolDefinition
+	for _, tool := range r.tools {
+		if tool.PluginID == pluginID {
+			tools = append(tools, tool.Definition)
+		}
+	}
+
+	return tools
+}
+
+// GetAll retrieves all registered tools
+func (r *ToolRegistry) GetAll() []*RegisteredTool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	tools := make([]*RegisteredTool, 0, len(r.tools))
+	for _, tool := range r.tools {
+		tools = append(tools, tool)
+	}
+
+	return tools
+}
+
 // HookRegistry manages registered hooks
 type HookRegistry struct {
 	hooks map[string][]*RegisteredHook

@@ -155,6 +155,18 @@ type LoadResult struct {
 	Errors  map[string]error // Errors by plugin ID
 }
 
+// PluginInfo contains plugin metadata with tool definitions
+type PluginInfo struct {
+	ID         string
+	Manifest   PluginManifest
+	State      PluginState
+	Tools      []ToolDefinition
+	LoadedAt   time.Time
+	LastReload *time.Time
+	ErrorCount int
+	LastError  error
+}
+
 // PluginDiscoveryConfig configures plugin discovery
 type PluginDiscoveryConfig struct {
 	BuiltinDir   string

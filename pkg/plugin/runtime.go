@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -258,4 +259,104 @@ func (r *PluginRuntime) GetHookRegistry() *HookRegistry {
 // GetPluginRegistry returns the plugin registry
 func (r *PluginRuntime) GetPluginRegistry() *PluginRegistry {
 	return r.registry
+}
+
+// ListPlugins returns all loaded plugins with their tool definitions
+func (r *PluginRuntime) ListPlugins() []PluginInfo {
+	records := r.registry.GetAll()
+	plugins := make([]PluginInfo, 0, len(records))
+
+	for _, record := range records {
+		// Get tools registered by this plugin from the tool registry
+		tools := r.toolRegistry.GetByPlugin(record.Plugin.ID)
+
+		plugins = append(plugins, PluginInfo{
+			ID:         record.Plugin.ID,
+			Manifest:   record.Plugin.Manifest,
+			State:      record.Plugin.State,
+			Tools:      tools,
+			LoadedAt:   record.LoadedAt,
+			LastReload: record.LastReloadAt,
+			ErrorCount: record.ErrorCount,
+			LastError:  record.LastError,
+		})
+	}
+
+	return plugins
+}
+
+// GetPluginForTool retrieves a plugin that can execute a tool
+// This implements the toolexecutor.PluginToolProvider interface
+func (r *PluginRuntime) GetPluginForTool(pluginID string) (*pluginToolAdapter, error) {
+	record, exists := r.registry.Get(pluginID)
+	if !exists {
+		return nil, fmt.Errorf("plugin %s not found in registry", pluginID)
+	}
+
+	if record.Plugin.State != StateEnabled {
+		return nil, fmt.Errorf("plugin %s is not enabled (current state: %s)", pluginID, record.Plugin.State)
+	}
+
+	if record.Plugin.Client == nil {
+		return nil, fmt.Errorf("plugin %s has no active client connection", pluginID)
+	}
+
+	return &pluginToolAdapter{
+		plugin: record.Plugin,
+		logger: r.logger,
+	}, nil
+}
+
+// pluginToolAdapter adapts a LoadedPlugin to implement toolexecutor.PluginToolProvider
+type pluginToolAdapter struct {
+	plugin *LoadedPlugin
+	logger zerolog.Logger
+}
+
+// ExecuteTool executes a tool on the plugin with proper error handling and context propagation
+func (a *pluginToolAdapter) ExecuteTool(ctx context.Context, name string, params map[string]interface{}) (map[string]interface{}, error) {
+	a.logger.Debug().
+		Str("plugin", a.plugin.ID).
+		Str("tool", name).
+		Interface("params", params).
+		Msg("Executing plugin tool")
+
+	// Check context before execution
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("context error before execution: %w", ctx.Err())
+	}
+
+	// Execute tool through plugin client with context
+	result, err := a.plugin.Client.ExecuteTool(ctx, name, params)
+	if err != nil {
+		// Provide detailed error information
+		a.logger.Error().
+			Err(err).
+			Str("plugin", a.plugin.ID).
+			Str("tool", name).
+			Msg("Plugin tool execution failed")
+
+		return nil, fmt.Errorf("plugin %s tool %s execution failed: %w", a.plugin.ID, name, err)
+	}
+
+	a.logger.Debug().
+		Str("plugin", a.plugin.ID).
+		Str("tool", name).
+		Msg("Plugin tool execution succeeded")
+
+	return result, nil
+}
+
+// GetID returns the plugin ID
+func (a *pluginToolAdapter) GetID() string {
+	return a.plugin.ID
+}
+
+// GetPermissions returns the plugin's permissions as strings
+func (a *pluginToolAdapter) GetPermissions() []string {
+	permissions := make([]string, len(a.plugin.Manifest.Permissions))
+	for i, perm := range a.plugin.Manifest.Permissions {
+		permissions[i] = string(perm)
+	}
+	return permissions
 }

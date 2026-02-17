@@ -56,6 +56,8 @@ type ToolDefinition struct {
 	Description string          `json:"description"`
 	Parameters  []ToolParameter `json:"parameters"`
 	Handler     ToolHandler     `json:"-"`
+	PluginID    string          `json:"plugin_id,omitempty"`   // Plugin ID if this is a plugin tool
+	Permissions []string        `json:"permissions,omitempty"` // Plugin permissions for approval decisions
 }
 
 // ToolHandler is the function signature for tool execution
@@ -82,18 +84,22 @@ type ToolResult struct {
 
 // ToolExecutor manages and executes tools
 type ToolExecutor struct {
-	tools          map[string]*ToolDefinition
-	schemas        map[string]*gojsonschema.Schema
-	sandboxManager *SandboxManager
-	mu             sync.RWMutex
+	tools           map[string]*ToolDefinition
+	schemas         map[string]*gojsonschema.Schema
+	sandboxManager  *SandboxManager
+	approvalManager *ApprovalManager
+	pluginRuntime   PluginToolExecutor
+	mu              sync.RWMutex
 }
 
 // New creates a new ToolExecutor
 func New() *ToolExecutor {
 	te := &ToolExecutor{
-		tools:          make(map[string]*ToolDefinition),
-		schemas:        make(map[string]*gojsonschema.Schema),
-		sandboxManager: nil, // Sandbox is optional
+		tools:           make(map[string]*ToolDefinition),
+		schemas:         make(map[string]*gojsonschema.Schema),
+		sandboxManager:  nil, // Sandbox is optional
+		approvalManager: nil, // Approval is optional
+		pluginRuntime:   nil, // Plugin runtime is optional
 	}
 
 	log.Info().Msg("Tool executor initialized")
@@ -101,11 +107,135 @@ func New() *ToolExecutor {
 	return te
 }
 
+// PluginToolProvider is an interface for plugin tool execution
+type PluginToolProvider interface {
+	ExecuteTool(ctx context.Context, name string, params map[string]interface{}) (map[string]interface{}, error)
+}
+
+// PluginToolExecutor is an interface for executing plugin tools
+type PluginToolExecutor interface {
+	GetPlugin(pluginID string) (interface{}, error)
+}
+
+// PluginInfo provides metadata about a plugin for approval decisions
+type PluginInfo interface {
+	GetID() string
+	GetPermissions() []string
+}
+
+// RegisterPluginTool registers a single plugin tool with conflict resolution
+func (te *ToolExecutor) RegisterPluginTool(pluginID string, toolDef ToolDefinition, pluginRuntime PluginToolExecutor) error {
+	// Check for name conflicts
+	originalName := toolDef.Name
+	toolName := originalName
+
+	te.mu.Lock()
+	defer te.mu.Unlock()
+
+	// If tool name already exists, prefix with plugin name
+	if _, exists := te.tools[toolName]; exists {
+		toolName = pluginID + "_" + originalName
+		log.Warn().
+			Str("original_name", originalName).
+			Str("prefixed_name", toolName).
+			Str("plugin", pluginID).
+			Msg("Tool name conflict resolved by prefixing with plugin name")
+	}
+
+	// Get plugin permissions for approval workflow
+	var pluginPermissions []string
+	plugin, err := pluginRuntime.GetPlugin(pluginID)
+	if err == nil {
+		if pluginInfo, ok := plugin.(PluginInfo); ok {
+			pluginPermissions = pluginInfo.GetPermissions()
+		}
+	}
+
+	// Create a handler that routes to the plugin through PluginRuntime
+	handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		log.Debug().
+			Str("plugin", pluginID).
+			Str("tool", originalName).
+			Msg("Routing tool execution to plugin")
+
+		// Get plugin provider from runtime
+		plugin, err := pluginRuntime.GetPlugin(pluginID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get plugin %s: %w", pluginID, err)
+		}
+
+		// Type assert to PluginToolProvider interface
+		provider, ok := plugin.(PluginToolProvider)
+		if !ok {
+			return nil, fmt.Errorf("plugin %s does not implement PluginToolProvider interface", pluginID)
+		}
+
+		// Execute tool through the plugin provider with timeout handling
+		result, err := provider.ExecuteTool(ctx, originalName, params)
+		if err != nil {
+			// Check if error is due to context cancellation or timeout
+			if ctx.Err() != nil {
+				if ctx.Err() == context.DeadlineExceeded {
+					return nil, fmt.Errorf("plugin tool execution timeout: %w", err)
+				}
+				return nil, fmt.Errorf("plugin tool execution cancelled: %w", err)
+			}
+			return nil, fmt.Errorf("plugin %s tool %s execution failed: %w", pluginID, originalName, err)
+		}
+
+		log.Debug().
+			Str("plugin", pluginID).
+			Str("tool", originalName).
+			Msg("Plugin tool execution completed")
+
+		return result, nil
+	}
+
+	// Create tool definition with the handler and plugin metadata
+	wrappedDef := ToolDefinition{
+		Name:        toolName,
+		Description: fmt.Sprintf("[Plugin: %s] %s", pluginID, toolDef.Description),
+		Parameters:  toolDef.Parameters,
+		Handler:     handler,
+		PluginID:    pluginID,
+		Permissions: pluginPermissions,
+	}
+
+	// Validate and register
+	if err := te.validateToolDefinition(wrappedDef); err != nil {
+		return fmt.Errorf("invalid plugin tool definition: %w", err)
+	}
+
+	schema, err := te.generateJSONSchema(wrappedDef)
+	if err != nil {
+		return fmt.Errorf("failed to generate schema for plugin tool: %w", err)
+	}
+
+	te.tools[toolName] = &wrappedDef
+	te.schemas[toolName] = schema
+
+	log.Info().
+		Str("tool", toolName).
+		Str("plugin", pluginID).
+		Strs("permissions", pluginPermissions).
+		Msg("Plugin tool registered")
+
+	return nil
+}
+
 // SetSandboxManager sets the sandbox manager for the tool executor
 func (te *ToolExecutor) SetSandboxManager(manager *SandboxManager) {
 	te.mu.Lock()
 	defer te.mu.Unlock()
 	te.sandboxManager = manager
+}
+
+// SetApprovalManager sets the approval manager for the tool executor
+func (te *ToolExecutor) SetApprovalManager(manager *ApprovalManager) {
+	te.mu.Lock()
+	defer te.mu.Unlock()
+	te.approvalManager = manager
+	log.Info().Msg("Approval manager configured for tool executor")
 }
 
 // RegisterTool registers a new tool
@@ -432,4 +562,34 @@ func (te *ToolExecutor) truncateOutput(output interface{}) (interface{}, bool) {
 		Msg("Output truncated")
 
 	return truncated, true
+}
+
+// requiresApproval determines if a plugin tool requires approval based on its permissions
+// Sensitive permissions that require approval:
+// - filesystem:write - Can modify files
+// - process:spawn - Can execute processes
+// - database:write - Can modify database
+// - network:http - Can make external HTTP requests
+// - network:websocket - Can establish WebSocket connections
+func (te *ToolExecutor) requiresApproval(tool *ToolDefinition) bool {
+	if tool.PluginID == "" {
+		// Not a plugin tool, no approval needed
+		return false
+	}
+
+	sensitivePermissions := map[string]bool{
+		"filesystem:write":  true,
+		"process:spawn":     true,
+		"database:write":    true,
+		"network:http":      true,
+		"network:websocket": true,
+	}
+
+	for _, perm := range tool.Permissions {
+		if sensitivePermissions[perm] {
+			return true
+		}
+	}
+
+	return false
 }
