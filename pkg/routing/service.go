@@ -417,10 +417,7 @@ func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
 		return bindingRankUnspecified, true
 	}
 
-	hasSelector := false
-
 	if peer := normalizedString(matchSpec["peer"]); peer != "" {
-		hasSelector = true
 		if peer != routeContextValue(ctx, "peer", "peer_id", "peerId") {
 			return 0, false
 		}
@@ -428,7 +425,6 @@ func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
 	}
 
 	if guild := normalizedString(matchSpec["guild_id"], matchSpec["guildId"]); guild != "" {
-		hasSelector = true
 		if guild != routeContextValue(ctx, "guild_id", "guildId") {
 			return 0, false
 		}
@@ -436,7 +432,6 @@ func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
 	}
 
 	if team := normalizedString(matchSpec["team_id"], matchSpec["teamId"]); team != "" {
-		hasSelector = true
 		if team != routeContextValue(ctx, "team_id", "teamId") {
 			return 0, false
 		}
@@ -444,7 +439,6 @@ func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
 	}
 
 	if account := normalizedString(matchSpec["account_id"], matchSpec["accountId"]); account != "" {
-		hasSelector = true
 		value := routeContextValue(ctx, "account_id", "accountId")
 		if account == "*" {
 			if value == "" {
@@ -459,7 +453,6 @@ func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
 	}
 
 	if channel := normalizedString(matchSpec["channel"]); channel != "" {
-		hasSelector = true
 		if channel != routeContextValue(ctx, "channel") {
 			return 0, false
 		}
@@ -467,18 +460,13 @@ func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
 	}
 
 	if defaultEnabled, ok := toBool(matchSpec["default"]); ok {
-		hasSelector = true
 		if defaultEnabled {
 			return bindingRankUnspecified, true
 		}
 		return 0, false
 	}
 
-	if !hasSelector {
-		return bindingRankUnspecified, true
-	}
-
-	return 0, false
+	return bindingRankUnspecified, true
 }
 
 func routeBindingMatch(route *Route) map[string]interface{} {

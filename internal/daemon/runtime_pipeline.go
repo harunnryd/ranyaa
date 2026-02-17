@@ -166,6 +166,12 @@ func (d *Daemon) dispatchPlannedStep(
 		"mode":  sandboxMode,
 		"scope": sandboxScope,
 	}
+	if runtime := strings.TrimSpace(agentCfg.Sandbox.Runtime); runtime != "" {
+		sandboxPolicy["runtime"] = runtime
+	}
+	if image := strings.TrimSpace(agentCfg.Sandbox.DockerImage); image != "" {
+		sandboxPolicy["docker_image"] = image
+	}
 
 	result, runErr := d.agentRunner.RunWithContext(ctx, agent.AgentRunParams{
 		Prompt:        prompt,

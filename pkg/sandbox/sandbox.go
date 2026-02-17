@@ -2,7 +2,18 @@ package sandbox
 
 import (
 	"context"
+	"strings"
 	"time"
+)
+
+// Runtime defines the sandbox implementation backend.
+type Runtime string
+
+const (
+	// RuntimeHost executes commands directly on host with policy checks.
+	RuntimeHost Runtime = "host"
+	// RuntimeDocker executes commands in ephemeral Docker containers.
+	RuntimeDocker Runtime = "docker"
 )
 
 // Mode defines the sandbox mode
@@ -29,6 +40,9 @@ const (
 
 // Config defines sandbox configuration
 type Config struct {
+	// Runtime specifies sandbox backend implementation (host, docker)
+	Runtime Runtime `json:"runtime"`
+
 	// Mode specifies the sandbox mode (off, all, tools)
 	Mode Mode `json:"mode"`
 
@@ -43,6 +57,9 @@ type Config struct {
 
 	// NetworkAccess defines network access rules
 	NetworkAccess NetworkAccess `json:"network_access"`
+
+	// Docker defines Docker-specific runtime settings.
+	Docker DockerConfig `json:"docker"`
 }
 
 // ResourceLimits defines resource constraints for sandboxed execution
@@ -82,6 +99,27 @@ type NetworkAccess struct {
 
 	// DeniedHosts lists hosts that cannot be accessed
 	DeniedHosts []string `json:"denied_hosts"`
+}
+
+// DockerConfig defines Docker runtime settings.
+type DockerConfig struct {
+	// Image is the container image used for sandbox execution.
+	Image string `json:"image"`
+
+	// Network controls Docker network mode (e.g. none, bridge, host).
+	Network string `json:"network"`
+
+	// User sets container user (e.g. "65532:65532").
+	User string `json:"user,omitempty"`
+
+	// SecurityOpt sets --security-opt values.
+	SecurityOpt []string `json:"security_opt,omitempty"`
+
+	// CapDrop sets --cap-drop values.
+	CapDrop []string `json:"cap_drop,omitempty"`
+
+	// ExtraArgs appends extra flags to `docker run`.
+	ExtraArgs []string `json:"extra_args,omitempty"`
 }
 
 // ExecuteRequest represents a sandbox execution request
@@ -144,8 +182,9 @@ type Sandbox interface {
 // DefaultConfig returns a default sandbox configuration
 func DefaultConfig() Config {
 	return Config{
-		Mode:  ModeOff,
-		Scope: ScopeAgent,
+		Runtime: RuntimeHost,
+		Mode:    ModeOff,
+		Scope:   ScopeAgent,
 		ResourceLimits: ResourceLimits{
 			MaxCPU:       50,
 			MaxMemoryMB:  512,
@@ -162,11 +201,27 @@ func DefaultConfig() Config {
 			AllowedHosts: []string{},
 			DeniedHosts:  []string{},
 		},
+		Docker: DockerConfig{
+			Image:       "alpine:3.20",
+			Network:     "none",
+			User:        "65532:65532",
+			SecurityOpt: []string{"no-new-privileges:true"},
+			CapDrop:     []string{"ALL"},
+			ExtraArgs:   []string{},
+		},
 	}
 }
 
 // ValidateConfig validates a sandbox configuration
 func ValidateConfig(cfg Config) error {
+	// Validate runtime
+	switch cfg.Runtime {
+	case "", RuntimeHost, RuntimeDocker:
+		// Valid
+	default:
+		return ErrInvalidRuntime
+	}
+
 	// Validate mode
 	switch cfg.Mode {
 	case ModeOff, ModeAll, ModeTools:
@@ -198,6 +253,12 @@ func ValidateConfig(cfg Config) error {
 
 	if cfg.ResourceLimits.Timeout < 0 {
 		return ErrInvalidTimeout
+	}
+
+	if cfg.Runtime == RuntimeDocker {
+		if strings.TrimSpace(cfg.Docker.Image) == "" {
+			return ErrDockerImageRequired
+		}
 	}
 
 	return nil

@@ -3,6 +3,9 @@ package sandbox
 import "errors"
 
 var (
+	// ErrInvalidRuntime is returned when the sandbox runtime is invalid
+	ErrInvalidRuntime = errors.New("invalid sandbox runtime")
+
 	// ErrInvalidMode is returned when the sandbox mode is invalid
 	ErrInvalidMode = errors.New("invalid sandbox mode")
 
@@ -38,4 +41,7 @@ var (
 
 	// ErrNetworkAccessDenied is returned when network access is denied
 	ErrNetworkAccessDenied = errors.New("network access denied")
+
+	// ErrDockerImageRequired is returned when Docker runtime is enabled without an image
+	ErrDockerImageRequired = errors.New("docker image is required for docker runtime")
 )

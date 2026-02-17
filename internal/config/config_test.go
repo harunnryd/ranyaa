@@ -17,6 +17,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Len(t, cfg.Agents, 1)
 	assert.Equal(t, "default", cfg.Agents[0].ID)
 	assert.Equal(t, []string{"*"}, cfg.Agents[0].AllowedSubAgents)
+	assert.Equal(t, "host", cfg.Agents[0].Sandbox.Runtime)
 }
 
 func TestConfigValidate(t *testing.T) {
@@ -129,6 +130,43 @@ func TestConfigValidate(t *testing.T) {
 		err := cfg.Validate()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "allowed_sub_agents")
+	})
+
+	t.Run("invalid sandbox runtime", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
+		cfg.Channels.Telegram.Enabled = false
+		cfg.Agents[0].Sandbox.Runtime = "invalid-runtime"
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid sandbox runtime")
+	})
+
+	t.Run("docker runtime requires image", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
+		cfg.Channels.Telegram.Enabled = false
+		cfg.Agents[0].Sandbox.Runtime = "docker"
+		cfg.Agents[0].Sandbox.DockerImage = ""
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "docker_image")
 	})
 
 	t.Run("telegram enabled without token", func(t *testing.T) {

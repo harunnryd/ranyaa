@@ -11,6 +11,7 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
+	assert.Equal(t, RuntimeHost, cfg.Runtime)
 	assert.Equal(t, ModeOff, cfg.Mode)
 	assert.Equal(t, ScopeAgent, cfg.Scope)
 	assert.Equal(t, 50, cfg.ResourceLimits.MaxCPU)
@@ -71,6 +72,23 @@ func TestValidateConfig_InvalidMode(t *testing.T) {
 
 	err := ValidateConfig(cfg)
 	assert.ErrorIs(t, err, ErrInvalidMode)
+}
+
+func TestValidateConfig_InvalidRuntime(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Runtime = Runtime("invalid")
+
+	err := ValidateConfig(cfg)
+	assert.ErrorIs(t, err, ErrInvalidRuntime)
+}
+
+func TestValidateConfig_DockerRuntimeRequiresImage(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Runtime = RuntimeDocker
+	cfg.Docker.Image = ""
+
+	err := ValidateConfig(cfg)
+	assert.ErrorIs(t, err, ErrDockerImageRequired)
 }
 
 func TestValidateConfig_InvalidScope(t *testing.T) {
@@ -134,4 +152,9 @@ func TestMode_Constants(t *testing.T) {
 func TestScope_Constants(t *testing.T) {
 	assert.Equal(t, Scope("agent"), ScopeAgent)
 	assert.Equal(t, Scope("session"), ScopeSession)
+}
+
+func TestRuntime_Constants(t *testing.T) {
+	assert.Equal(t, Runtime("host"), RuntimeHost)
+	assert.Equal(t, Runtime("docker"), RuntimeDocker)
 }

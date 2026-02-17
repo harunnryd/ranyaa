@@ -47,6 +47,23 @@ func TestSandboxManager_GetOrCreateSandbox(t *testing.T) {
 	_ = sm.StopAll(ctx)
 }
 
+func TestSandboxManager_GetOrCreateSandbox_DockerRuntime(t *testing.T) {
+	cfg := sandbox.DefaultConfig()
+	cfg.Runtime = sandbox.RuntimeDocker
+	cfg.Docker.Image = "alpine:3.20"
+	cfg.ResourceLimits.Timeout = 5 * time.Second
+	sm := NewSandboxManager(cfg)
+
+	ctx := context.Background()
+	sb, err := sm.GetOrCreateSandbox(ctx, "docker-agent")
+	require.NoError(t, err)
+	require.NotNil(t, sb)
+	assert.True(t, sb.IsRunning())
+	assert.IsType(t, &sandbox.DockerSandbox{}, sb)
+
+	_ = sm.StopAll(ctx)
+}
+
 func TestSandboxManager_StopSandbox(t *testing.T) {
 	cfg := sandbox.DefaultConfig()
 	sm := NewSandboxManager(cfg)

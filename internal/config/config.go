@@ -73,8 +73,10 @@ type ToolPolicyConfig struct {
 
 // SandboxConfig defines sandbox settings
 type SandboxConfig struct {
-	Mode  string `json:"mode" mapstructure:"mode"`   // off, all, tools
-	Scope string `json:"scope" mapstructure:"scope"` // agent, session
+	Mode        string `json:"mode" mapstructure:"mode"`                 // off, all, tools
+	Scope       string `json:"scope" mapstructure:"scope"`               // agent, session
+	Runtime     string `json:"runtime" mapstructure:"runtime"`           // host, docker
+	DockerImage string `json:"docker_image" mapstructure:"docker_image"` // docker image when runtime=docker
 }
 
 // ModelsConfig holds model configuration
@@ -204,8 +206,10 @@ func DefaultConfig() *Config {
 					Deny:  []string{},
 				},
 				Sandbox: SandboxConfig{
-					Mode:  "off",
-					Scope: "agent",
+					Mode:        "off",
+					Scope:       "agent",
+					Runtime:     "host",
+					DockerImage: "",
 				},
 				MaxConcurrentSubAgents: 5,
 				AllowedSubAgents:       []string{"*"},
@@ -265,6 +269,12 @@ func (c *Config) Validate() error {
 		}
 		if agent.Role != "" && agent.Role != "captain" && agent.Role != "executor" && agent.Role != "critic" && agent.Role != "general" {
 			return fmt.Errorf("agent %s: invalid role %s", agent.ID, agent.Role)
+		}
+		if agent.Sandbox.Runtime != "" && agent.Sandbox.Runtime != "host" && agent.Sandbox.Runtime != "docker" {
+			return fmt.Errorf("agent %s: invalid sandbox runtime %s", agent.ID, agent.Sandbox.Runtime)
+		}
+		if agent.Sandbox.Runtime == "docker" && strings.TrimSpace(agent.Sandbox.DockerImage) == "" {
+			return fmt.Errorf("agent %s: sandbox docker_image is required when runtime=docker", agent.ID)
 		}
 		for idx, subAgentID := range agent.AllowedSubAgents {
 			if strings.TrimSpace(subAgentID) == "" {

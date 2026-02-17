@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -160,6 +161,15 @@ func (d *Daemon) initializeCoreModules() error {
 	sandboxCfg := sandbox.DefaultConfig()
 	sandboxCfg.Mode = sandbox.ModeTools
 	sandboxCfg.Scope = sandbox.ScopeSession
+	if len(d.config.Agents) > 0 {
+		agentSandbox := d.config.Agents[0].Sandbox
+		if runtime := strings.TrimSpace(agentSandbox.Runtime); runtime != "" {
+			sandboxCfg.Runtime = sandbox.Runtime(runtime)
+		}
+		if image := strings.TrimSpace(agentSandbox.DockerImage); image != "" {
+			sandboxCfg.Docker.Image = image
+		}
+	}
 	if d.config.WorkspacePath != "" {
 		sandboxCfg.FilesystemAccess.AllowedPaths = append(sandboxCfg.FilesystemAccess.AllowedPaths, d.config.WorkspacePath)
 	}

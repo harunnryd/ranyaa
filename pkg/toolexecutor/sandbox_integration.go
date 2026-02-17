@@ -38,7 +38,7 @@ func (sm *SandboxManager) GetOrCreateSandbox(ctx context.Context, key string) (s
 	sm.mu.RUnlock()
 
 	// Create new sandbox
-	sb, err := sandbox.NewHostSandbox(sm.config)
+	sb, err := sm.newSandbox()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sandbox: %w", err)
 	}
@@ -58,6 +58,15 @@ func (sm *SandboxManager) GetOrCreateSandbox(ctx context.Context, key string) (s
 		Msg("Created and started sandbox")
 
 	return sb, nil
+}
+
+func (sm *SandboxManager) newSandbox() (sandbox.Sandbox, error) {
+	switch sm.config.Runtime {
+	case sandbox.RuntimeDocker:
+		return sandbox.NewDockerSandbox(sm.config)
+	default:
+		return sandbox.NewHostSandbox(sm.config)
+	}
 }
 
 // StopSandbox stops a sandbox for the given key
@@ -167,6 +176,22 @@ func CreateSandboxConfig(execCtx *ExecutionContext) sandbox.Config {
 	// Set scope
 	if scope, ok := execCtx.SandboxPolicy["scope"].(string); ok {
 		cfg.Scope = sandbox.Scope(scope)
+	}
+
+	// Set runtime backend
+	if runtime, ok := execCtx.SandboxPolicy["runtime"].(string); ok {
+		cfg.Runtime = sandbox.Runtime(runtime)
+	}
+	if dockerImage, ok := execCtx.SandboxPolicy["docker_image"].(string); ok {
+		cfg.Docker.Image = dockerImage
+	}
+	if dockerRaw, ok := execCtx.SandboxPolicy["docker"].(map[string]interface{}); ok {
+		if image, ok := dockerRaw["image"].(string); ok && image != "" {
+			cfg.Docker.Image = image
+		}
+		if network, ok := dockerRaw["network"].(string); ok && network != "" {
+			cfg.Docker.Network = network
+		}
 	}
 
 	// Set working directory
