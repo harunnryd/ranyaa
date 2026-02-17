@@ -320,7 +320,7 @@ func (s *Service) ListJobs(agentID *string, enabled *bool) []*Job {
 			continue
 		}
 
-		jobs = append(jobs, job)
+		jobs = append(jobs, cloneJob(job))
 	}
 
 	// Sort by creation time
@@ -340,7 +340,44 @@ func (s *Service) GetJob(id string) *Job {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.jobs[id]
+	return cloneJob(s.jobs[id])
+}
+
+func cloneJob(job *Job) *Job {
+	if job == nil {
+		return nil
+	}
+
+	cloned := *job
+
+	if job.Delivery != nil {
+		deliveryCopy := *job.Delivery
+		cloned.Delivery = &deliveryCopy
+	}
+
+	if job.Schedule.AnchorMs != nil {
+		anchorCopy := *job.Schedule.AnchorMs
+		cloned.Schedule.AnchorMs = &anchorCopy
+	}
+
+	if job.State.NextRunAtMs != nil {
+		value := *job.State.NextRunAtMs
+		cloned.State.NextRunAtMs = &value
+	}
+	if job.State.RunningAtMs != nil {
+		value := *job.State.RunningAtMs
+		cloned.State.RunningAtMs = &value
+	}
+	if job.State.LastRunAtMs != nil {
+		value := *job.State.LastRunAtMs
+		cloned.State.LastRunAtMs = &value
+	}
+	if job.State.LastDurationMs != nil {
+		value := *job.State.LastDurationMs
+		cloned.State.LastDurationMs = &value
+	}
+
+	return &cloned
 }
 
 // Stop gracefully shuts down the service

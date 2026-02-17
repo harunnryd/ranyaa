@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -33,6 +34,8 @@ type WorkspaceWatcher struct {
 	onFileDeleted      FileEventCallback
 	done               chan struct{}
 	debounceTimers     map[string]*time.Timer
+	debounceMu         sync.Mutex
+	stopOnce           sync.Once
 }
 
 // WorkspaceWatcherConfig holds configuration for the watcher
@@ -86,12 +89,17 @@ func (w *WorkspaceWatcher) Start() error {
 
 // Stop stops the watcher
 func (w *WorkspaceWatcher) Stop() error {
-	close(w.done)
+	w.stopOnce.Do(func() {
+		close(w.done)
+	})
 
 	// Cancel all pending debounce timers
+	w.debounceMu.Lock()
 	for _, timer := range w.debounceTimers {
 		timer.Stop()
 	}
+	clear(w.debounceTimers)
+	w.debounceMu.Unlock()
 
 	if err := w.watcher.Close(); err != nil {
 		return fmt.Errorf("failed to close watcher: %w", err)
@@ -136,15 +144,28 @@ func (w *WorkspaceWatcher) handleEvent(event fsnotify.Event) {
 
 // debounceEvent debounces file events using a timer
 func (w *WorkspaceWatcher) debounceEvent(event fsnotify.Event) {
+	w.debounceMu.Lock()
+	defer w.debounceMu.Unlock()
+
 	// Cancel existing timer for this file
 	if timer, exists := w.debounceTimers[event.Name]; exists {
 		timer.Stop()
 	}
 
+	eventCopy := event
+
 	// Create new timer
 	w.debounceTimers[event.Name] = time.AfterFunc(w.stabilityThreshold, func() {
-		delete(w.debounceTimers, event.Name)
-		w.processEvent(event)
+		w.debounceMu.Lock()
+		delete(w.debounceTimers, eventCopy.Name)
+		w.debounceMu.Unlock()
+
+		select {
+		case <-w.done:
+			return
+		default:
+			w.processEvent(eventCopy)
+		}
 	})
 }
 
