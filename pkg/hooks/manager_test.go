@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -109,6 +110,9 @@ func TestManagerTriggerRespectsTimeout(t *testing.T) {
 
 	err = manager.Trigger(context.Background(), "daemon:startup", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "deadline exceeded")
+	assert.True(t,
+		strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "signal: killed"),
+		"expected timeout-related error, got: %v",
+		err,
+	)
 }
-

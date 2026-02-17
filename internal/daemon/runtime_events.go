@@ -78,4 +78,3 @@ func (h *runtimeEventHub) Publish(sessionKey string, evt agent.RuntimeEvent) {
 	}
 	h.mu.RUnlock()
 }
-

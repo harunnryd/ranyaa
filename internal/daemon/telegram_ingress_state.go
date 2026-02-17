@@ -142,4 +142,3 @@ func (s *telegramPairingStore) Pair(peerID string) {
 	s.paired[peerID] = true
 	s.mu.Unlock()
 }
-

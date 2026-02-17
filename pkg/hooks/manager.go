@@ -35,7 +35,7 @@ type Manager struct {
 	enabled bool
 	logger  zerolog.Logger
 
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 	hooksByEvent map[string][]Hook
 }
 
@@ -174,4 +174,3 @@ func normalizeEnvKey(key string) string {
 	}
 	return builder.String()
 }
-

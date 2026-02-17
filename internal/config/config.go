@@ -185,12 +185,12 @@ type AIProfile struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Telegram: TelegramConfig{
-			DMPolicy: "pairing",
-			DedupeTTLSeconds: 300,
-			StreamMode:       "partial",
-			StreamMinInterval: 2000,
-			StreamMinChars:   200,
-			PairingPrompt:    "⚠️ Please pair this device first. Send /pair to begin.",
+			DMPolicy:           "pairing",
+			DedupeTTLSeconds:   300,
+			StreamMode:         "partial",
+			StreamMinInterval:  2000,
+			StreamMinChars:     200,
+			PairingPrompt:      "⚠️ Please pair this device first. Send /pair to begin.",
 			PairingSuccessText: "✅ Device paired. You can now send messages.",
 		},
 		Models: ModelsConfig{

@@ -73,9 +73,9 @@ type Daemon struct {
 	cleanup  *session.Cleanup
 
 	// Internal
-	eventLoop *EventLoop
-	router    *Router
-	lifecycle *LifecycleManager
+	eventLoop     *EventLoop
+	router        *Router
+	lifecycle     *LifecycleManager
 	runtimeEvents *runtimeEventHub
 
 	ctx    context.Context
