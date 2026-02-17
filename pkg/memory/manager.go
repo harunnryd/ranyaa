@@ -17,8 +17,12 @@ import (
 	"time"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
+	"github.com/harun/ranya/internal/observability"
+	"github.com/harun/ranya/internal/tracing"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 func init() {
@@ -82,6 +86,8 @@ type Config struct {
 
 // NewManager creates a new memory manager
 func NewManager(cfg Config) (*Manager, error) {
+	observability.EnsureRegistered()
+
 	if cfg.WorkspacePath == "" {
 		return nil, errors.New("workspace path is required")
 	}
@@ -207,6 +213,27 @@ func (m *Manager) initSchema() error {
 
 // Search performs hybrid search (vector + keyword)
 func (m *Manager) Search(query string, opts *SearchOptions) ([]SearchResult, error) {
+	return m.SearchWithContext(context.Background(), query, opts)
+}
+
+// SearchWithContext performs hybrid search (vector + keyword) with context propagation.
+func (m *Manager) SearchWithContext(ctx context.Context, query string, opts *SearchOptions) ([]SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.memory",
+		"memory.search",
+		attribute.String("query", query),
+	)
+	defer span.End()
+
+	logger := tracing.LoggerFromContext(ctx, m.logger)
+	start := time.Now()
+	defer observability.RecordMemorySearch(time.Since(start))
+
 	if query == "" {
 		return []SearchResult{}, nil
 	}
@@ -230,8 +257,6 @@ func (m *Manager) Search(query string, opts *SearchOptions) ([]SearchResult, err
 			m.logger.Warn().Err(err).Msg("Sync failed before search")
 		}
 	}
-
-	ctx := context.Background()
 
 	// Perform vector and keyword search in parallel
 	var vectorResults []vectorSearchResult
@@ -259,13 +284,16 @@ func (m *Manager) Search(query string, opts *SearchOptions) ([]SearchResult, err
 
 	// Handle errors with graceful degradation
 	if vectorErr != nil {
-		m.logger.Warn().Err(vectorErr).Msg("Vector search failed, using keyword only")
+		logger.Warn().Err(vectorErr).Msg("Vector search failed, using keyword only")
 	}
 	if keywordErr != nil {
-		m.logger.Warn().Err(keywordErr).Msg("Keyword search failed, using vector only")
+		logger.Warn().Err(keywordErr).Msg("Keyword search failed, using vector only")
 	}
 
 	if vectorErr != nil && keywordErr != nil {
+		span.RecordError(vectorErr)
+		span.RecordError(keywordErr)
+		span.SetStatus(codes.Error, "both search methods failed")
 		return nil, fmt.Errorf("both search methods failed")
 	}
 
@@ -277,7 +305,7 @@ func (m *Manager) Search(query string, opts *SearchOptions) ([]SearchResult, err
 		results = results[:opts.Limit]
 	}
 
-	m.logger.Debug().
+	logger.Debug().
 		Str("query", query).
 		Int("results", len(results)).
 		Msg("Search completed")
@@ -495,9 +523,15 @@ func (m *Manager) mergeResults(vectorResults []vectorSearchResult, keywordResult
 
 // Sync indexes the workspace
 func (m *Manager) Sync() error {
+	ctx := context.Background()
+	ctx, span := tracing.StartSpan(ctx, "ranya.memory", "memory.sync")
+	defer span.End()
+	logger := tracing.LoggerFromContext(ctx, m.logger)
+
 	m.mu.Lock()
 	if m.isSyncing {
 		m.mu.Unlock()
+		span.SetStatus(codes.Error, "sync already in progress")
 		return errors.New("sync already in progress")
 	}
 	m.isSyncing = true
@@ -512,13 +546,15 @@ func (m *Manager) Sync() error {
 		m.mu.Unlock()
 	}()
 
-	m.logger.Info().Msg("Starting sync")
+	logger.Info().Msg("Starting sync")
 	start := time.Now()
+	defer observability.RecordMemoryWrite(time.Since(start))
 
 	// Find all markdown files
 	var mdFiles []string
 	err := filepath.WalkDir(m.workspacePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			span.RecordError(err)
 			return err
 		}
 		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
@@ -528,6 +564,8 @@ func (m *Manager) Sync() error {
 		return nil
 	})
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to walk workspace: %w", err)
 	}
 
@@ -540,7 +578,8 @@ func (m *Manager) Sync() error {
 		fullPath := filepath.Join(m.workspacePath, relPath)
 		indexed, chunks, err := m.indexFile(fullPath, relPath)
 		if err != nil {
-			m.logger.Warn().Err(err).Str("file", relPath).Msg("Failed to index file")
+			logger.Warn().Err(err).Str("file", relPath).Msg("Failed to index file")
+			span.RecordError(err)
 			continue
 		}
 		if indexed {
@@ -554,17 +593,21 @@ func (m *Manager) Sync() error {
 	// Prune deleted files
 	pruned, err := m.pruneDeletedFiles(mdFiles)
 	if err != nil {
-		m.logger.Warn().Err(err).Msg("Failed to prune deleted files")
+		logger.Warn().Err(err).Msg("Failed to prune deleted files")
+		span.RecordError(err)
 	}
 
 	duration := time.Since(start)
-	m.logger.Info().
+	logger.Info().
 		Int("files_indexed", filesIndexed).
 		Int("files_skipped", filesSkipped).
 		Int("chunks_created", chunksCreated).
 		Int("files_pruned", pruned).
 		Dur("duration", duration).
 		Msg("Sync completed")
+
+	status := m.Status()
+	observability.SetMemoryEntries(status.TotalChunks)
 
 	return nil
 }

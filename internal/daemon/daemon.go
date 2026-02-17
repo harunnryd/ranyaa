@@ -11,7 +11,9 @@ import (
 
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/logger"
+	"github.com/harun/ranya/internal/observability"
 	"github.com/harun/ranya/internal/telegram"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/browser"
 	"github.com/harun/ranya/pkg/commandqueue"
@@ -72,28 +74,45 @@ type Daemon struct {
 	startTime time.Time
 	running   bool
 	mu        sync.RWMutex
+
+	tracingEnabled bool
 }
 
 // New creates a new daemon instance
 func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	observability.EnsureRegistered()
+	if err := tracing.InitOpenTelemetry("ranya-daemon"); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize tracing: %w", err)
+	}
+
 	d := &Daemon{
-		config: cfg,
-		logger: log,
-		ctx:    ctx,
-		cancel: cancel,
+		config:         cfg,
+		logger:         log,
+		ctx:            ctx,
+		cancel:         cancel,
+		tracingEnabled: true,
 	}
 
 	// Initialize core modules in dependency order
 	if err := d.initializeCoreModules(); err != nil {
 		cancel()
+		if d.tracingEnabled {
+			_ = tracing.ShutdownOpenTelemetry(context.Background())
+			d.tracingEnabled = false
+		}
 		return nil, fmt.Errorf("failed to initialize core modules: %w", err)
 	}
 
 	// Initialize services
 	if err := d.initializeServices(); err != nil {
 		cancel()
+		if d.tracingEnabled {
+			_ = tracing.ShutdownOpenTelemetry(context.Background())
+			d.tracingEnabled = false
+		}
 		return nil, fmt.Errorf("failed to initialize services: %w", err)
 	}
 
@@ -475,7 +494,9 @@ func (d *Daemon) Start() error {
 	d.startTime = time.Now()
 	d.mu.Unlock()
 
-	d.logger.Info().Msg("Starting Ranya daemon")
+	traceID := tracing.NewTraceID()
+	logger := d.logger.GetZerolog().With().Str("trace_id", traceID).Logger()
+	logger.Info().Msg("Starting Ranya daemon")
 
 	// Start lifecycle manager
 	if err := d.lifecycle.Start(); err != nil {
@@ -485,9 +506,9 @@ func (d *Daemon) Start() error {
 	// Start workspace manager if configured
 	if d.workspaceMgr != nil {
 		if err := d.workspaceMgr.Init(); err != nil {
-			d.logger.Warn().Err(err).Msg("Failed to initialize workspace manager")
+			logger.Warn().Err(err).Msg("Failed to initialize workspace manager")
 		} else {
-			d.logger.Info().Msg("Workspace manager started")
+			logger.Info().Msg("Workspace manager started")
 		}
 	}
 
@@ -495,40 +516,40 @@ func (d *Daemon) Start() error {
 	if err := d.gatewayServer.Start(); err != nil {
 		return fmt.Errorf("failed to start gateway server: %w", err)
 	}
-	d.logger.Info().Msg("Gateway server started")
+	logger.Info().Msg("Gateway server started")
 
 	// Start webhook server if enabled
 	if d.webhookServer != nil {
 		if err := d.webhookServer.Start(); err != nil {
-			d.logger.Warn().Err(err).Msg("Failed to start webhook server")
+			logger.Warn().Err(err).Msg("Failed to start webhook server")
 		} else {
-			d.logger.Info().Msg("Webhook server started")
+			logger.Info().Msg("Webhook server started")
 		}
 	}
 
 	// Start cron service
-	d.logger.Info().Msg("Cron service started")
+	logger.Info().Msg("Cron service started")
 
 	// Start Telegram bot if enabled
 	if d.telegramBot != nil {
 		if err := d.telegramBot.Start(); err != nil {
 			return fmt.Errorf("failed to start telegram bot: %w", err)
 		}
-		d.logger.Info().Msg("Telegram bot started")
+		logger.Info().Msg("Telegram bot started")
 	}
 
 	// Start session archiver
 	if err := d.archiver.Start(); err != nil {
-		d.logger.Warn().Err(err).Msg("Failed to start session archiver")
+		logger.Warn().Err(err).Msg("Failed to start session archiver")
 	} else {
-		d.logger.Info().Msg("Session archiver started")
+		logger.Info().Msg("Session archiver started")
 	}
 
 	// Start session cleanup
 	if err := d.cleanup.Start(); err != nil {
-		d.logger.Warn().Err(err).Msg("Failed to start session cleanup")
+		logger.Warn().Err(err).Msg("Failed to start session cleanup")
 	} else {
-		d.logger.Info().Msg("Session cleanup started")
+		logger.Info().Msg("Session cleanup started")
 	}
 
 	// Start event loop
@@ -538,7 +559,7 @@ func (d *Daemon) Start() error {
 		d.eventLoop.Run(d.ctx)
 	}()
 
-	d.logger.Info().Msg("Daemon started successfully - all core modules active")
+	logger.Info().Msg("Daemon started successfully - all core modules active")
 
 	return nil
 }
@@ -553,78 +574,80 @@ func (d *Daemon) Stop() error {
 	d.running = false
 	d.mu.Unlock()
 
-	d.logger.Info().Msg("Stopping Ranya daemon")
+	traceID := tracing.NewTraceID()
+	logger := d.logger.GetZerolog().With().Str("trace_id", traceID).Logger()
+	logger.Info().Msg("Stopping Ranya daemon")
 
 	// Stop Telegram bot
 	if d.telegramBot != nil {
 		if err := d.telegramBot.Stop(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to stop telegram bot")
+			logger.Error().Err(err).Msg("Failed to stop telegram bot")
 		}
 	}
 
 	// Stop webhook server
 	if d.webhookServer != nil {
 		if err := d.webhookServer.Stop(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to stop webhook server")
+			logger.Error().Err(err).Msg("Failed to stop webhook server")
 		}
 	}
 
 	// Stop gateway server
 	if d.gatewayServer != nil {
 		if err := d.gatewayServer.Stop(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to stop gateway server")
+			logger.Error().Err(err).Msg("Failed to stop gateway server")
 		}
 	}
 
 	// Stop cron service
-	d.logger.Info().Msg("Cron service stopped")
+	logger.Info().Msg("Cron service stopped")
 
 	// Stop workspace manager
 	if d.workspaceMgr != nil {
 		if err := d.workspaceMgr.Close(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to close workspace manager")
+			logger.Error().Err(err).Msg("Failed to close workspace manager")
 		}
 	}
 
 	// Stop session archiver
 	if d.archiver != nil && d.archiver.IsRunning() {
 		if err := d.archiver.Stop(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to stop session archiver")
+			logger.Error().Err(err).Msg("Failed to stop session archiver")
 		}
 	}
 
 	// Stop session cleanup
 	if d.cleanup != nil && d.cleanup.IsRunning() {
 		if err := d.cleanup.Stop(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to stop session cleanup")
+			logger.Error().Err(err).Msg("Failed to stop session cleanup")
 		}
 	}
 
 	// Stop browser context
 	if d.browserContext != nil {
 		if err := d.browserContext.Shutdown(d.ctx); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to shutdown browser context")
+			logger.Error().Err(err).Msg("Failed to shutdown browser context")
 		}
 	}
 
 	// Stop plugin runtime
 	if d.pluginRuntime != nil {
 		if err := d.pluginRuntime.Shutdown(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to shutdown plugin runtime")
+			logger.Error().Err(err).Msg("Failed to shutdown plugin runtime")
 		}
 	}
 
 	// Stop orchestrator
 	if d.orchestrator != nil {
 		if err := d.orchestrator.Shutdown(d.ctx); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to shutdown orchestrator")
+			logger.Error().Err(err).Msg("Failed to shutdown orchestrator")
 		}
 	}
 
 	// Stop subagent coordinator
 	if d.subagentCoord != nil {
 		if err := d.subagentCoord.Close(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to close subagent coordinator")
+			logger.Error().Err(err).Msg("Failed to close subagent coordinator")
 		}
 	}
 
@@ -640,29 +663,38 @@ func (d *Daemon) Stop() error {
 
 	select {
 	case <-done:
-		d.logger.Info().Msg("All goroutines stopped")
+		logger.Info().Msg("All goroutines stopped")
 	case <-time.After(5 * time.Second):
-		d.logger.Warn().Msg("Timeout waiting for goroutines to stop")
+		logger.Warn().Msg("Timeout waiting for goroutines to stop")
 	}
 
 	// Stop lifecycle manager
 	if err := d.lifecycle.Stop(); err != nil {
-		d.logger.Error().Err(err).Msg("Failed to stop lifecycle manager")
+		logger.Error().Err(err).Msg("Failed to stop lifecycle manager")
 	}
 
 	// Close memory manager
 	if d.memoryMgr != nil {
 		if err := d.memoryMgr.Close(); err != nil {
-			d.logger.Error().Err(err).Msg("Failed to close memory manager")
+			logger.Error().Err(err).Msg("Failed to close memory manager")
 		}
 	}
 
 	// Close session manager
 	if err := d.sessionMgr.Close(); err != nil {
-		d.logger.Error().Err(err).Msg("Failed to close session manager")
+		logger.Error().Err(err).Msg("Failed to close session manager")
 	}
 
-	d.logger.Info().Msg("Daemon stopped successfully")
+	if d.tracingEnabled {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := tracing.ShutdownOpenTelemetry(shutdownCtx); err != nil {
+			logger.Error().Err(err).Msg("Failed to shutdown tracing")
+		}
+		cancel()
+		d.tracingEnabled = false
+	}
+
+	logger.Info().Msg("Daemon stopped successfully")
 
 	return nil
 }

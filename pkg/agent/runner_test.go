@@ -177,7 +177,7 @@ func TestLoadSessionHistory(t *testing.T) {
 		err := runner.sessionManager.CreateSession(sessionKey)
 		require.NoError(t, err)
 
-		history, err := runner.loadSessionHistory(sessionKey)
+		history, err := runner.loadSessionHistory(context.Background(), sessionKey)
 		assert.NoError(t, err)
 		assert.Empty(t, history)
 	})
@@ -193,7 +193,7 @@ func TestLoadSessionHistory(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		history, err := runner.loadSessionHistory(sessionKey)
+		history, err := runner.loadSessionHistory(context.Background(), sessionKey)
 		assert.NoError(t, err)
 		assert.Len(t, history, 1)
 		assert.Equal(t, "user", history[0].Message.Role)
@@ -210,7 +210,7 @@ func TestLoadSessionHistory(t *testing.T) {
 		require.NoError(t, err)
 
 		// Session manager should skip invalid entries gracefully
-		history, err := runner.loadSessionHistory(sessionKey)
+		history, err := runner.loadSessionHistory(context.Background(), sessionKey)
 		assert.NoError(t, err)
 		assert.Empty(t, history) // Invalid entry should be skipped
 	})

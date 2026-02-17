@@ -6,7 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harun/ranya/internal/observability"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Task represents an asynchronous operation to be executed
@@ -22,6 +26,7 @@ type TaskOptions struct {
 type taskRecord struct {
 	id         string
 	task       Task
+	ctx        context.Context
 	generation int
 	enqueuedAt time.Time
 	options    TaskOptions
@@ -70,6 +75,8 @@ type CommandQueue struct {
 
 // New creates a new CommandQueue with default lanes
 func New() *CommandQueue {
+	observability.EnsureRegistered()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cq := &CommandQueue{
@@ -104,6 +111,29 @@ func (cq *CommandQueue) initLane(lane string, concurrency int) {
 
 // Enqueue adds a task to the specified lane
 func (cq *CommandQueue) Enqueue(lane string, task Task, options *TaskOptions) (interface{}, error) {
+	return cq.EnqueueWithContext(context.Background(), lane, task, options)
+}
+
+// EnqueueWithContext adds a task to the specified lane and propagates context metadata.
+func (cq *CommandQueue) EnqueueWithContext(ctx context.Context, lane string, task Task, options *TaskOptions) (interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.commandqueue",
+		"commandqueue.enqueue",
+		attribute.String("lane", lane),
+	)
+	defer span.End()
+
+	if tracing.GetSessionKey(ctx) == "" {
+		ctx = tracing.WithSessionKey(ctx, lane)
+	}
+
+	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", lane).Logger()
+
 	// Ensure lane exists
 	cq.ensureLane(lane)
 
@@ -121,6 +151,7 @@ func (cq *CommandQueue) Enqueue(lane string, task Task, options *TaskOptions) (i
 	record := &taskRecord{
 		id:         taskID,
 		task:       task,
+		ctx:        ctx,
 		generation: cq.lanes[lane].generation,
 		enqueuedAt: time.Now(),
 		options:    opts,
@@ -134,11 +165,13 @@ func (cq *CommandQueue) Enqueue(lane string, task Task, options *TaskOptions) (i
 	queueSize := len(ls.queue)
 	ls.mu.Unlock()
 
-	log.Debug().
+	logger.Debug().
 		Str("lane", lane).
 		Str("taskId", taskID).
 		Int("queueSize", queueSize).
 		Msg("Task enqueued")
+
+	observability.RecordQueueEnqueue(lane, queueSize)
 
 	// Emit enqueued event (synchronous)
 	cq.emit(Event{
@@ -160,6 +193,10 @@ func (cq *CommandQueue) Enqueue(lane string, task Task, options *TaskOptions) (i
 
 	// Wait for result
 	result := <-record.result
+	if result.err != nil {
+		span.RecordError(result.err)
+		span.SetStatus(codes.Error, result.err.Error())
+	}
 	return result.value, result.err
 }
 
@@ -197,7 +234,8 @@ func (cq *CommandQueue) processLane(lane string) {
 		ls.running++
 		ls.activeIDs[record.id] = true
 
-		log.Debug().
+		logger := tracing.LoggerFromContext(record.ctx, log.Logger).With().Str("session_key", lane).Logger()
+		logger.Debug().
 			Str("lane", lane).
 			Str("taskId", record.id).
 			Int("running", ls.running).
@@ -213,10 +251,33 @@ func (cq *CommandQueue) processLane(lane string) {
 func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 	defer cq.wg.Done()
 
+	taskCtx := record.ctx
+	if taskCtx == nil {
+		taskCtx = context.Background()
+	}
+	taskCtx, span := tracing.StartSpan(
+		taskCtx,
+		"ranya.commandqueue",
+		"commandqueue.execute_task",
+		attribute.String("lane", lane),
+		attribute.String("task_id", record.id),
+	)
+	defer span.End()
+
+	taskCtx = tracing.WithSessionKey(taskCtx, lane)
+	logger := tracing.LoggerFromContext(taskCtx, log.Logger).With().Str("session_key", lane).Logger()
+
+	runCtx, cancel := context.WithCancel(taskCtx)
+	stopCancel := context.AfterFunc(cq.ctx, cancel)
+	defer func() {
+		stopCancel()
+		cancel()
+	}()
+
 	startTime := time.Now()
 
 	// Execute task
-	value, err := record.task(cq.ctx)
+	value, err := record.task(runCtx)
 
 	duration := time.Since(startTime)
 
@@ -225,6 +286,7 @@ func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 	ls.mu.Lock()
 	ls.running--
 	delete(ls.activeIDs, record.id)
+	queueSize := len(ls.queue)
 	ls.mu.Unlock()
 
 	// Send result
@@ -232,19 +294,23 @@ func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 	close(record.result)
 
 	if err != nil {
-		log.Error().
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		logger.Error().
 			Str("lane", lane).
 			Str("taskId", record.id).
 			Dur("duration", duration).
 			Err(err).
 			Msg("Task failed")
 	} else {
-		log.Debug().
+		logger.Debug().
 			Str("lane", lane).
 			Str("taskId", record.id).
 			Dur("duration", duration).
 			Msg("Task completed")
 	}
+
+	observability.RecordQueueCompletion(lane, duration, err == nil, queueSize)
 
 	// Emit completed event (synchronous)
 	cq.emit(Event{
@@ -373,6 +439,7 @@ func (cq *CommandQueue) ClearLane(lane string) int {
 	ls.queue = make([]*taskRecord, 0)
 
 	log.Info().Str("lane", lane).Int("cleared", count).Msg("Lane cleared")
+	observability.SetQueueSize(lane, 0)
 
 	return count
 }
@@ -403,6 +470,7 @@ func (cq *CommandQueue) ResetLane(lane string) {
 	ls.queue = make([]*taskRecord, 0)
 
 	log.Info().Str("lane", lane).Int("generation", ls.generation).Msg("Lane reset")
+	observability.SetQueueSize(lane, 0)
 }
 
 // SetConcurrency updates the concurrency limit for a lane

@@ -6,8 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harun/ranya/internal/observability"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/rs/zerolog/log"
 	"github.com/xeipuuv/gojsonschema"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // ToolPolicy defines which tools an agent can use
@@ -94,6 +98,8 @@ type ToolExecutor struct {
 
 // New creates a new ToolExecutor
 func New() *ToolExecutor {
+	observability.EnsureRegistered()
+
 	te := &ToolExecutor{
 		tools:           make(map[string]*ToolDefinition),
 		schemas:         make(map[string]*gojsonschema.Schema),
@@ -304,15 +310,34 @@ func (te *ToolExecutor) GetToolCount() int {
 
 // Execute executes a tool with the given parameters
 func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map[string]interface{}, execCtx *ExecutionContext) ToolResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if execCtx != nil && execCtx.SessionKey != "" && tracing.GetSessionKey(ctx) == "" {
+		ctx = tracing.WithSessionKey(ctx, execCtx.SessionKey)
+	}
+
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.toolexecutor",
+		"toolexecutor.execute",
+		attribute.String("tool", toolName),
+	)
+	defer span.End()
+
+	logger := tracing.LoggerFromContext(ctx, log.Logger)
 	startTime := time.Now()
 
 	// Check tool policy if provided
 	if execCtx != nil && execCtx.ToolPolicy != nil {
 		if !execCtx.ToolPolicy.IsToolAllowed(toolName) {
-			log.Warn().
+			logger.Warn().
 				Str("tool", toolName).
 				Str("agent_id", execCtx.AgentID).
 				Msg("Tool execution blocked by policy")
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, false)
+			span.SetStatus(codes.Error, "tool blocked by policy")
 			return ToolResult{
 				Success: false,
 				Error:   fmt.Sprintf("tool '%s' is not allowed by agent policy", toolName),
@@ -334,7 +359,13 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		mode, ok := execCtx.SandboxPolicy["mode"].(string)
 		if ok && mode != "off" {
 			// Use sandbox for execution
-			return ExecuteWithSandbox(ctx, te, sandboxManager, toolName, params, execCtx)
+			result := ExecuteWithSandbox(ctx, te, sandboxManager, toolName, params, execCtx)
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, result.Success)
+			if !result.Success && result.Error != "" {
+				span.SetStatus(codes.Error, result.Error)
+			}
+			return result
 		}
 	}
 
@@ -345,7 +376,10 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 	te.mu.RUnlock()
 
 	if tool == nil {
-		log.Error().Str("tool", toolName).Msg("Tool not found")
+		logger.Error().Str("tool", toolName).Msg("Tool not found")
+		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, false)
+		span.SetStatus(codes.Error, "tool not found")
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("tool not found: %s", toolName),
@@ -354,14 +388,18 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 	// Validate parameters
 	if err := te.validateParameters(schema, params); err != nil {
-		log.Error().Str("tool", toolName).Err(err).Msg("Parameter validation failed")
+		logger.Error().Str("tool", toolName).Err(err).Msg("Parameter validation failed")
+		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, false)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "parameter validation failed")
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("parameter validation failed: %v", err),
 		}
 	}
 
-	log.Debug().Str("tool", toolName).Msg("Executing tool")
+	logger.Debug().Str("tool", toolName).Msg("Executing tool")
 
 	// Apply timeout
 	timeout := 30 * time.Second
@@ -389,11 +427,12 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 	select {
 	case result := <-resultChan:
 		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, true)
 
 		// Truncate output if too large
 		output, truncated := te.truncateOutput(result)
 
-		log.Debug().
+		logger.Debug().
 			Str("tool", toolName).
 			Dur("duration", duration).
 			Bool("truncated", truncated).
@@ -410,8 +449,11 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 	case err := <-errChan:
 		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, false)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 
-		log.Error().
+		logger.Error().
 			Str("tool", toolName).
 			Dur("duration", duration).
 			Err(err).
@@ -427,8 +469,11 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 	case <-timeoutCtx.Done():
 		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, false)
+		span.RecordError(timeoutCtx.Err())
+		span.SetStatus(codes.Error, "tool execution timeout")
 
-		log.Error().
+		logger.Error().
 			Str("tool", toolName).
 			Dur("duration", duration).
 			Msg("Tool execution timeout")

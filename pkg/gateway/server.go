@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/harun/ranya/internal/observability"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/memory"
@@ -100,6 +103,13 @@ func NewServer(cfg Config) (*Server, error) {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWebSocket)
+	mux.HandleFunc("/rpc", s.handleRPC)
+	mux.Handle("/metrics", observability.MetricsHandler())
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -316,6 +326,62 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 				Msg("Failed to send response")
 		}
 	}()
+}
+
+// handleRPC handles single-shot HTTP JSON-RPC requests.
+func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.sharedSecret != "" {
+		secret := r.Header.Get("X-Ranya-Secret")
+		if secret != s.sharedSecret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	req, err := s.router.ParseRequest(body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(RPCResponse{
+			ID:      "",
+			JSONRPC: "2.0",
+			Error: &RPCError{
+				Code:    ParseError,
+				Message: err.Error(),
+			},
+		})
+		return
+	}
+
+	traceID := r.Header.Get("X-Trace-Id")
+	if traceID == "" {
+		traceID = tracing.NewTraceID()
+	}
+	ctx := tracing.WithTraceID(context.Background(), traceID)
+	logger := tracing.LoggerFromContext(ctx, s.logger)
+	logger.Info().
+		Str("trace_id", traceID).
+		Str("request_id", req.ID).
+		Str("method", req.Method).
+		Msg("Gateway received HTTP RPC request")
+
+	resp := s.router.RouteRequest(req)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logger.Error().Err(err).Msg("Failed to encode RPC response")
+	}
 }
 
 // handleAuthMessage handles authentication messages

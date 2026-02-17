@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,7 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harun/ranya/internal/observability"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Message represents a single conversation turn
@@ -36,6 +41,8 @@ type SessionManager struct {
 
 // New creates a new SessionManager
 func New(sessionsDir string) (*SessionManager, error) {
+	observability.EnsureRegistered()
+
 	if sessionsDir == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
@@ -55,6 +62,7 @@ func New(sessionsDir string) (*SessionManager, error) {
 	}
 
 	log.Info().Str("dir", sessionsDir).Msg("Session manager initialized")
+	sm.updateActiveSessionsMetric()
 
 	return sm, nil
 }
@@ -81,6 +89,14 @@ func (sm *SessionManager) getSessionPath(sessionKey string) string {
 	return filepath.Join(sm.sessionsDir, sessionKey+".jsonl")
 }
 
+func (sm *SessionManager) updateActiveSessionsMetric() {
+	sessions, err := sm.ListSessions()
+	if err != nil {
+		return
+	}
+	observability.SetActiveSessions(len(sessions))
+}
+
 // getWriteLock gets or creates a write lock for a session
 func (sm *SessionManager) getWriteLock(sessionKey string) *sync.Mutex {
 	sm.locksMu.Lock()
@@ -104,7 +120,27 @@ func (sm *SessionManager) releaseWriteLock(sessionKey string) {
 
 // CreateSession creates a new session file
 func (sm *SessionManager) CreateSession(sessionKey string) error {
+	return sm.CreateSessionWithContext(context.Background(), sessionKey)
+}
+
+// CreateSessionWithContext creates a new session file with tracing context.
+func (sm *SessionManager) CreateSessionWithContext(ctx context.Context, sessionKey string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.session",
+		"session.create",
+		attribute.String("session_key", sessionKey),
+	)
+	defer span.End()
+	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", sessionKey).Logger()
+
 	if err := sm.validateSessionKey(sessionKey); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
@@ -112,25 +148,51 @@ func (sm *SessionManager) CreateSession(sessionKey string) error {
 
 	// Check if session already exists
 	if _, err := os.Stat(sessionPath); err == nil {
-		log.Debug().Str("sessionKey", sessionKey).Msg("Session already exists")
+		logger.Debug().Str("sessionKey", sessionKey).Msg("Session already exists")
 		return nil
 	}
 
 	// Create empty file with restricted permissions
 	file, err := os.OpenFile(sessionPath, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to create session file: %w", err)
 	}
 	file.Close()
 
-	log.Info().Str("sessionKey", sessionKey).Msg("Session created")
+	sm.updateActiveSessionsMetric()
+	logger.Info().Str("sessionKey", sessionKey).Msg("Session created")
 
 	return nil
 }
 
 // AppendMessage appends a message to a session
 func (sm *SessionManager) AppendMessage(sessionKey string, message Message) error {
+	return sm.AppendMessageWithContext(context.Background(), sessionKey, message)
+}
+
+// AppendMessageWithContext appends a message to a session with tracing context.
+func (sm *SessionManager) AppendMessageWithContext(ctx context.Context, sessionKey string, message Message) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.session",
+		"session.append_message",
+		attribute.String("session_key", sessionKey),
+		attribute.String("role", message.Role),
+	)
+	defer span.End()
+	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", sessionKey).Logger()
+	start := time.Now()
+	defer observability.RecordSessionSave(time.Since(start))
+
 	if err := sm.validateSessionKey(sessionKey); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
@@ -154,7 +216,9 @@ func (sm *SessionManager) AppendMessage(sessionKey string, message Message) erro
 
 	// Create session if it doesn't exist
 	if _, err := os.Stat(sessionPath); os.IsNotExist(err) {
-		if err := sm.CreateSession(sessionKey); err != nil {
+		if err := sm.CreateSessionWithContext(ctx, sessionKey); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return err
 		}
 	}
@@ -162,6 +226,8 @@ func (sm *SessionManager) AppendMessage(sessionKey string, message Message) erro
 	// Open file for appending
 	file, err := os.OpenFile(sessionPath, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to open session file: %w", err)
 	}
 	defer file.Close()
@@ -175,20 +241,26 @@ func (sm *SessionManager) AppendMessage(sessionKey string, message Message) erro
 	// Marshal to JSON
 	data, err := json.Marshal(entry)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
 	// Write JSON line
 	if _, err := file.Write(append(data, '\n')); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
 	// Sync to disk
 	if err := file.Sync(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to sync file: %w", err)
 	}
 
-	log.Debug().
+	logger.Debug().
 		Str("sessionKey", sessionKey).
 		Str("role", message.Role).
 		Msg("Message appended")
@@ -198,7 +270,29 @@ func (sm *SessionManager) AppendMessage(sessionKey string, message Message) erro
 
 // LoadSession loads all messages from a session
 func (sm *SessionManager) LoadSession(sessionKey string) ([]SessionEntry, error) {
+	return sm.LoadSessionWithContext(context.Background(), sessionKey)
+}
+
+// LoadSessionWithContext loads all messages from a session with tracing context.
+func (sm *SessionManager) LoadSessionWithContext(ctx context.Context, sessionKey string) ([]SessionEntry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.session",
+		"session.load",
+		attribute.String("session_key", sessionKey),
+	)
+	defer span.End()
+	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", sessionKey).Logger()
+	start := time.Now()
+	defer observability.RecordSessionLoad(time.Since(start))
+
 	if err := sm.validateSessionKey(sessionKey); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
@@ -206,13 +300,15 @@ func (sm *SessionManager) LoadSession(sessionKey string) ([]SessionEntry, error)
 
 	// Check if session exists
 	if _, err := os.Stat(sessionPath); os.IsNotExist(err) {
-		log.Debug().Str("sessionKey", sessionKey).Msg("Session does not exist")
+		logger.Debug().Str("sessionKey", sessionKey).Msg("Session does not exist")
 		return []SessionEntry{}, nil
 	}
 
 	// Open file for reading
 	file, err := os.Open(sessionPath)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to open session file: %w", err)
 	}
 	defer file.Close()
@@ -231,7 +327,7 @@ func (sm *SessionManager) LoadSession(sessionKey string) ([]SessionEntry, error)
 
 		var entry SessionEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			log.Warn().
+			logger.Warn().
 				Str("sessionKey", sessionKey).
 				Int("line", lineNum).
 				Err(err).
@@ -241,7 +337,7 @@ func (sm *SessionManager) LoadSession(sessionKey string) ([]SessionEntry, error)
 
 		// Validate entry
 		if entry.Message.Role == "" || entry.Message.Content == "" {
-			log.Warn().
+			logger.Warn().
 				Str("sessionKey", sessionKey).
 				Int("line", lineNum).
 				Msg("Invalid entry, skipping")
@@ -252,10 +348,12 @@ func (sm *SessionManager) LoadSession(sessionKey string) ([]SessionEntry, error)
 	}
 
 	if err := scanner.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to read session file: %w", err)
 	}
 
-	log.Debug().
+	logger.Debug().
 		Str("sessionKey", sessionKey).
 		Int("messages", len(entries)).
 		Msg("Session loaded")
@@ -265,7 +363,27 @@ func (sm *SessionManager) LoadSession(sessionKey string) ([]SessionEntry, error)
 
 // DeleteSession deletes a session file
 func (sm *SessionManager) DeleteSession(sessionKey string) error {
+	return sm.DeleteSessionWithContext(context.Background(), sessionKey)
+}
+
+// DeleteSessionWithContext deletes a session file with tracing context.
+func (sm *SessionManager) DeleteSessionWithContext(ctx context.Context, sessionKey string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.session",
+		"session.delete",
+		attribute.String("session_key", sessionKey),
+	)
+	defer span.End()
+	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", sessionKey).Logger()
+
 	if err := sm.validateSessionKey(sessionKey); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
@@ -278,13 +396,16 @@ func (sm *SessionManager) DeleteSession(sessionKey string) error {
 
 	// Delete file
 	if err := os.Remove(sessionPath); err != nil && !os.IsNotExist(err) {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to delete session file: %w", err)
 	}
 
 	// Release lock
 	sm.releaseWriteLock(sessionKey)
+	sm.updateActiveSessionsMetric()
 
-	log.Info().Str("sessionKey", sessionKey).Msg("Session deleted")
+	logger.Info().Str("sessionKey", sessionKey).Msg("Session deleted")
 
 	return nil
 }

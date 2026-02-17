@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/harun/ranya/internal/observability"
 	"github.com/harun/ranya/pkg/toolexecutor"
 )
 
@@ -50,7 +51,7 @@ func MemorySearch(ctx context.Context, manager *Manager, params MemorySearchPara
 		MinScore:      params.MinScore,
 	}
 
-	results, err := manager.Search(params.Query, opts)
+	results, err := manager.SearchWithContext(ctx, params.Query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
@@ -77,6 +78,9 @@ type MemoryWriteResult struct {
 
 // MemoryWrite creates or updates a memory file
 func MemoryWrite(ctx context.Context, manager *Manager, workspacePath string, params MemoryWriteParams) (*MemoryWriteResult, error) {
+	start := time.Now()
+	defer observability.RecordMemoryWrite(time.Since(start))
+
 	if params.Path == "" {
 		return nil, fmt.Errorf("path is required")
 	}

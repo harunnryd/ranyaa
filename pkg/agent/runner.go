@@ -6,11 +6,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harun/ranya/internal/observability"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/memory"
 	"github.com/harun/ranya/pkg/session"
 	"github.com/harun/ranya/pkg/toolexecutor"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Runner orchestrates AI agent execution
@@ -20,6 +24,7 @@ type Runner struct {
 	commandQueue   *commandqueue.CommandQueue
 	memoryManager  *memory.Manager
 	logger         zerolog.Logger
+	providerFactory ProviderCreator
 
 	// Auth profiles
 	authProfiles []AuthProfile
@@ -38,10 +43,18 @@ type Config struct {
 	MemoryManager  *memory.Manager
 	Logger         zerolog.Logger
 	AuthProfiles   []AuthProfile
+	ProviderFactory ProviderCreator
+}
+
+// ProviderCreator creates LLM providers from auth profiles.
+type ProviderCreator interface {
+	NewProvider(profile AuthProfile) (LLMProvider, error)
 }
 
 // NewRunner creates a new agent runner
 func NewRunner(cfg Config) (*Runner, error) {
+	observability.EnsureRegistered()
+
 	if cfg.SessionManager == nil {
 		return nil, fmt.Errorf("session manager is required")
 	}
@@ -55,12 +68,18 @@ func NewRunner(cfg Config) (*Runner, error) {
 		return nil, fmt.Errorf("at least one auth profile is required")
 	}
 
+	providerFactory := cfg.ProviderFactory
+	if providerFactory == nil {
+		providerFactory = &ProviderFactory{}
+	}
+
 	return &Runner{
 		sessionManager: cfg.SessionManager,
 		toolExecutor:   cfg.ToolExecutor,
 		commandQueue:   cfg.CommandQueue,
 		memoryManager:  cfg.MemoryManager,
 		logger:         cfg.Logger,
+		providerFactory: providerFactory,
 		authProfiles:   cfg.AuthProfiles,
 		activeRuns:     make(map[string]context.CancelFunc),
 	}, nil
@@ -68,19 +87,45 @@ func NewRunner(cfg Config) (*Runner, error) {
 
 // Run executes an agent with the given parameters
 func (r *Runner) Run(params AgentRunParams) (AgentResult, error) {
+	return r.RunWithContext(context.Background(), params)
+}
+
+// RunWithContext executes an agent with a caller-provided context.
+func (r *Runner) RunWithContext(ctx context.Context, params AgentRunParams) (AgentResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tracing.GetTraceID(ctx) == "" {
+		ctx = tracing.NewRequestContext(ctx)
+	}
+	ctx = tracing.WithSessionKey(ctx, params.SessionKey)
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.agent",
+		"agent.run",
+		attribute.String("session_key", params.SessionKey),
+	)
+	defer span.End()
+	logger := tracing.LoggerFromContext(ctx, r.logger).With().Str("session_key", params.SessionKey).Logger()
+
 	// Validate configuration
 	if err := r.validateConfig(params.Config); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return AgentResult{}, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Enqueue in command queue (session-specific lane)
 	lane := fmt.Sprintf("session-%s", params.SessionKey)
 
-	result, err := r.commandQueue.Enqueue(lane, func(ctx context.Context) (interface{}, error) {
-		return r.executeAgent(ctx, params)
+	result, err := r.commandQueue.EnqueueWithContext(ctx, lane, func(taskCtx context.Context) (interface{}, error) {
+		return r.executeAgent(taskCtx, params)
 	}, nil)
 
 	if err != nil {
+		logger.Error().Err(err).Msg("Agent run failed before execution")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return AgentResult{}, err
 	}
 
@@ -116,6 +161,9 @@ func (r *Runner) IsRunning(sessionKey string) bool {
 
 // executeAgent performs the actual agent execution
 func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (AgentResult, error) {
+	ctx = tracing.WithSessionKey(ctx, params.SessionKey)
+	logger := tracing.LoggerFromContext(ctx, r.logger).With().Str("session_key", params.SessionKey).Logger()
+
 	// Create cancellable context
 	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -142,8 +190,9 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 	}
 
 	// Load session history
-	history, err := r.loadSessionHistory(params.SessionKey)
+	history, err := r.loadSessionHistory(execCtx, params.SessionKey)
 	if err != nil {
+		logger.Error().Err(err).Msg("Failed to load session history")
 		return AgentResult{}, fmt.Errorf("failed to load session history: %w", err)
 	}
 
@@ -160,10 +209,11 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 	}
 
 	// Save user message
-	if err := r.sessionManager.AppendMessage(params.SessionKey, session.Message{
+	if err := r.sessionManager.AppendMessageWithContext(execCtx, params.SessionKey, session.Message{
 		Role:    "user",
 		Content: params.Prompt,
 	}); err != nil {
+		logger.Error().Err(err).Msg("Failed to persist user message")
 		return AgentResult{}, fmt.Errorf("failed to save user message: %w", err)
 	}
 
@@ -174,7 +224,7 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 	}
 
 	// Save assistant response
-	if err := r.sessionManager.AppendMessage(params.SessionKey, session.Message{
+	if err := r.sessionManager.AppendMessageWithContext(execCtx, params.SessionKey, session.Message{
 		Role:    "assistant",
 		Content: result.Response,
 		Metadata: map[string]interface{}{
@@ -182,6 +232,7 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 			"usage": result.Usage,
 		},
 	}); err != nil {
+		logger.Error().Err(err).Msg("Failed to persist assistant message")
 		return AgentResult{}, fmt.Errorf("failed to save assistant message: %w", err)
 	}
 
@@ -207,8 +258,8 @@ func (r *Runner) validateConfig(config AgentConfig) error {
 }
 
 // loadSessionHistory loads and validates session history
-func (r *Runner) loadSessionHistory(sessionKey string) ([]session.SessionEntry, error) {
-	entries, err := r.sessionManager.LoadSession(sessionKey)
+func (r *Runner) loadSessionHistory(ctx context.Context, sessionKey string) ([]session.SessionEntry, error) {
+	entries, err := r.sessionManager.LoadSessionWithContext(ctx, sessionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +291,8 @@ func (r *Runner) buildMessages(ctx context.Context, history []session.SessionEnt
 	if params.Config.UseMemory && r.memoryManager != nil {
 		memoryContext, err := r.getMemoryContext(ctx, params.Prompt)
 		if err != nil {
-			r.logger.Warn().Err(err).Msg("Failed to load memory context")
+			logger := tracing.LoggerFromContext(ctx, r.logger)
+			logger.Warn().Err(err).Msg("Failed to load memory context")
 		} else if memoryContext != "" {
 			systemPrompt = fmt.Sprintf("%s\n\n# Relevant Context from Memory\n\n%s", systemPrompt, memoryContext)
 		}
@@ -273,7 +325,7 @@ func (r *Runner) buildMessages(ctx context.Context, history []session.SessionEnt
 
 // getMemoryContext retrieves relevant context from memory
 func (r *Runner) getMemoryContext(ctx context.Context, prompt string) (string, error) {
-	results, err := r.memoryManager.Search(prompt, &memory.SearchOptions{
+	results, err := r.memoryManager.SearchWithContext(ctx, prompt, &memory.SearchOptions{
 		Limit:    3,
 		MinScore: 0.5,
 	})
@@ -396,28 +448,32 @@ func (r *Runner) executeWithFailover(ctx context.Context, messages []AgentMessag
 	profiles := make([]AuthProfile, len(r.authProfiles))
 	copy(profiles, r.authProfiles)
 	r.authMu.RUnlock()
+	logger := tracing.LoggerFromContext(ctx, r.logger).With().Str("session_key", params.SessionKey).Logger()
 
 	// Sort by priority
 	sortProfilesByPriority(profiles)
 
 	var lastErr error
-	factory := &ProviderFactory{}
 
 	for _, profile := range profiles {
+		profileStart := time.Now()
 		// Skip profiles in cooldown
 		if profile.CooldownUntil != nil && time.Now().UnixMilli() < *profile.CooldownUntil {
-			r.logger.Debug().
+			observability.SetProviderCooldown(profile.Provider, true)
+			logger.Debug().
 				Str("profileId", profile.ID).
 				Msg("Skipping profile in cooldown")
 			continue
 		}
 
-		r.logger.Info().Str("profileId", profile.ID).Msg("Trying auth profile")
+		observability.SetProviderCooldown(profile.Provider, false)
+		logger.Info().Str("profileId", profile.ID).Msg("Trying auth profile")
 
 		// Create provider
-		provider, err := factory.NewProvider(profile)
+		provider, err := r.providerFactory.NewProvider(profile)
 		if err != nil {
-			r.logger.Warn().
+			observability.RecordAgentRun(profile.Provider, time.Since(profileStart), false)
+			logger.Warn().
 				Str("profileId", profile.ID).
 				Err(err).
 				Msg("Failed to create provider")
@@ -428,11 +484,14 @@ func (r *Runner) executeWithFailover(ctx context.Context, messages []AgentMessag
 		if err == nil {
 			// Success - reset failure count
 			r.updateProfileSuccess(profile.ID)
+			observability.RecordAgentRun(profile.Provider, time.Since(profileStart), true)
+			observability.SetProviderCooldown(profile.Provider, false)
 			return result, nil
 		}
 
 		lastErr = err
-		r.logger.Warn().
+		observability.RecordAgentRun(profile.Provider, time.Since(profileStart), false)
+		logger.Warn().
 			Str("profileId", profile.ID).
 			Err(err).
 			Msg("Auth profile failed")
@@ -446,13 +505,29 @@ func (r *Runner) executeWithFailover(ctx context.Context, messages []AgentMessag
 		}
 	}
 
+	if lastErr != nil {
+		logger.Error().Err(lastErr).Msg("All auth profiles failed")
+	}
 	return AgentResult{}, fmt.Errorf("all auth profiles failed: %w", lastErr)
 }
 
 // executeWithProvider executes with a specific LLM provider
 func (r *Runner) executeWithProvider(ctx context.Context, provider LLMProvider, messages []AgentMessage, tools []interface{}, params AgentRunParams) (AgentResult, error) {
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.agent",
+		"agent.execute_with_provider",
+		attribute.String("provider", provider.Provider()),
+	)
+	defer span.End()
+
 	// Execute with tool loop
-	return r.executeWithTools(ctx, provider, messages, tools, params)
+	result, err := r.executeWithTools(ctx, provider, messages, tools, params)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return result, err
 }
 
 // executeWithTools handles the tool execution loop
@@ -609,6 +684,7 @@ func (r *Runner) updateProfileSuccess(profileID string) {
 		if r.authProfiles[i].ID == profileID {
 			r.authProfiles[i].FailureCount = 0
 			r.authProfiles[i].CooldownUntil = nil
+			observability.SetProviderCooldown(r.authProfiles[i].Provider, false)
 			break
 		}
 	}
@@ -624,6 +700,7 @@ func (r *Runner) updateProfileFailure(profileID string) {
 			r.authProfiles[i].FailureCount++
 			cooldownMs := time.Now().UnixMilli() + int64(60000*r.authProfiles[i].FailureCount)
 			r.authProfiles[i].CooldownUntil = &cooldownMs
+			observability.SetProviderCooldown(r.authProfiles[i].Provider, true)
 			break
 		}
 	}

@@ -1,8 +1,10 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/memory"
 	"github.com/harun/ranya/pkg/session"
@@ -79,8 +81,11 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		cwd = cwdParam
 	}
 
+	ctx := tracing.NewRequestContext(context.Background())
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+
 	// Execute agent
-	result, err := s.agentRunner.Run(agent.AgentRunParams{
+	result, err := s.agentRunner.RunWithContext(ctx, agent.AgentRunParams{
 		Prompt:     prompt,
 		SessionKey: sessionKey,
 		Config:     config,
@@ -137,7 +142,9 @@ func (s *Server) handleSessionsSend(params map[string]interface{}) (interface{},
 	}
 
 	// Append message to session
-	if err := s.sessionManager.AppendMessage(targetSessionKey, session.Message{
+	ctx := tracing.NewRequestContext(context.Background())
+	ctx = tracing.WithSessionKey(ctx, targetSessionKey)
+	if err := s.sessionManager.AppendMessageWithContext(ctx, targetSessionKey, session.Message{
 		Role:    role,
 		Content: messageContent,
 	}); err != nil {
@@ -177,7 +184,9 @@ func (s *Server) handleSessionsGet(params map[string]interface{}) (interface{}, 
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
 	}
 
-	entries, err := s.sessionManager.LoadSession(sessionKey)
+	ctx := tracing.NewRequestContext(context.Background())
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	entries, err := s.sessionManager.LoadSessionWithContext(ctx, sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load session: %w", err)
 	}
@@ -206,7 +215,9 @@ func (s *Server) handleSessionsDelete(params map[string]interface{}) (interface{
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
 	}
 
-	if err := s.sessionManager.DeleteSession(sessionKey); err != nil {
+	ctx := tracing.NewRequestContext(context.Background())
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	if err := s.sessionManager.DeleteSessionWithContext(ctx, sessionKey); err != nil {
 		return nil, fmt.Errorf("failed to delete session: %w", err)
 	}
 
@@ -241,7 +252,8 @@ func (s *Server) handleMemorySearch(params map[string]interface{}) (interface{},
 	}
 
 	// Perform search
-	results, err := s.memoryManager.Search(query, opts)
+	ctx := tracing.NewRequestContext(context.Background())
+	results, err := s.memoryManager.SearchWithContext(ctx, query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("memory search failed: %w", err)
 	}

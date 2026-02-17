@@ -5,6 +5,9 @@ import (
 	"fmt"
 
 	"github.com/harun/ranya/internal/config"
+	"github.com/harun/ranya/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // Router routes messages to appropriate agents
@@ -21,7 +24,21 @@ func NewRouter(d *Daemon) *Router {
 
 // RouteMessage routes a message to the appropriate agent
 func (r *Router) RouteMessage(ctx context.Context, msg Message) error {
-	r.daemon.logger.Info().
+	if tracing.GetTraceID(ctx) == "" {
+		ctx = tracing.NewRequestContext(ctx)
+	}
+	ctx = tracing.WithSessionKey(ctx, msg.SessionKey)
+	ctx, span := tracing.StartSpan(
+		ctx,
+		"ranya.daemon",
+		"daemon.router.route_message",
+		attribute.String("session_key", msg.SessionKey),
+		attribute.String("source", msg.Source),
+	)
+	defer span.End()
+
+	logger := tracing.LoggerFromContext(ctx, r.daemon.logger.GetZerolog())
+	logger.Info().
 		Str("session_key", msg.SessionKey).
 		Str("source", msg.Source).
 		Msg("Routing message")
@@ -40,15 +57,20 @@ func (r *Router) RouteMessage(ctx context.Context, msg Message) error {
 	}
 
 	if agentCfg == nil {
+		err := fmt.Errorf("agent %s not found", agentID)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("agent %s not found", agentID)
 	}
 
 	// Enqueue message for processing
-	_, err := r.daemon.queue.Enqueue(msg.SessionKey, func(ctx context.Context) (interface{}, error) {
+	_, err := r.daemon.queue.EnqueueWithContext(ctx, msg.SessionKey, func(ctx context.Context) (interface{}, error) {
 		return r.processMessage(ctx, msg, agentCfg)
 	}, nil)
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to enqueue message: %w", err)
 	}
 
@@ -57,14 +79,15 @@ func (r *Router) RouteMessage(ctx context.Context, msg Message) error {
 
 // processMessage processes a message with the specified agent
 func (r *Router) processMessage(ctx context.Context, msg Message, agentCfg *config.AgentConfig) (interface{}, error) {
-	r.daemon.logger.Info().
+	logger := tracing.LoggerFromContext(ctx, r.daemon.logger.GetZerolog())
+	logger.Info().
 		Str("session_key", msg.SessionKey).
 		Str("agent_id", agentCfg.ID).
 		Msg("Processing message")
 
 	// TODO: This will be implemented when agent runner is integrated (Phase C)
 	// For now, just log the message
-	r.daemon.logger.Debug().
+	logger.Debug().
 		Str("content", msg.Content).
 		Msg("Message content")
 
