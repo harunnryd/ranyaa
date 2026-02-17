@@ -127,6 +127,10 @@ func writeBrowserConfig(t *testing.T, dataDir string) {
 }
 
 func createIntegrationDaemon(t *testing.T, provider agent.LLMProvider, withBrowserProfile bool) *Daemon {
+	return createIntegrationDaemonWithLogFile(t, provider, withBrowserProfile, "")
+}
+
+func createIntegrationDaemonWithLogFile(t *testing.T, provider agent.LLMProvider, withBrowserProfile bool, logFile string) *Daemon {
 	t.Helper()
 
 	if provider == nil {
@@ -166,7 +170,7 @@ func createIntegrationDaemon(t *testing.T, provider agent.LLMProvider, withBrows
 		writeBrowserConfig(t, tmpDir)
 	}
 
-	log, err := logger.New(logger.Config{Level: "debug", Console: false})
+	log, err := logger.New(logger.Config{Level: "debug", Console: false, File: logFile})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = log.Close()
@@ -229,6 +233,48 @@ func waitForCondition(t *testing.T, timeout time.Duration, description string, f
 	}
 
 	t.Fatalf("timed out waiting for condition: %s", description)
+}
+
+func readStructuredLogs(t *testing.T, logPath string) []map[string]interface{} {
+	t.Helper()
+
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+
+	lines := strings.Split(string(raw), "\n")
+	events := make([]map[string]interface{}, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		entry := map[string]interface{}{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		events = append(events, entry)
+	}
+
+	return events
+}
+
+func findEventIndex(events []map[string]interface{}, eventName string, toolName string) int {
+	for idx, event := range events {
+		value, _ := event["event"].(string)
+		if value != eventName {
+			continue
+		}
+		if toolName == "" {
+			return idx
+		}
+		tool, _ := event["tool"].(string)
+		if tool == toolName {
+			return idx
+		}
+	}
+
+	return -1
 }
 
 func TestIntegrationCLIMessageFlow(t *testing.T) {

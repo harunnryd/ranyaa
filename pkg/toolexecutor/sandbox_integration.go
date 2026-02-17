@@ -3,6 +3,7 @@ package toolexecutor
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/harun/ranya/pkg/sandbox"
@@ -13,6 +14,7 @@ import (
 type SandboxManager struct {
 	sandboxes map[string]sandbox.Sandbox // key: agent_id or session_key
 	config    sandbox.Config
+	mu        sync.RWMutex
 }
 
 // NewSandboxManager creates a new sandbox manager
@@ -25,12 +27,15 @@ func NewSandboxManager(config sandbox.Config) *SandboxManager {
 
 // GetOrCreateSandbox gets or creates a sandbox for the given key
 func (sm *SandboxManager) GetOrCreateSandbox(ctx context.Context, key string) (sandbox.Sandbox, error) {
+	sm.mu.RLock()
 	// Check if sandbox already exists
 	if sb, exists := sm.sandboxes[key]; exists {
 		if sb.IsRunning() {
+			sm.mu.RUnlock()
 			return sb, nil
 		}
 	}
+	sm.mu.RUnlock()
 
 	// Create new sandbox
 	sb, err := sandbox.NewHostSandbox(sm.config)
@@ -44,7 +49,9 @@ func (sm *SandboxManager) GetOrCreateSandbox(ctx context.Context, key string) (s
 	}
 
 	// Store sandbox
+	sm.mu.Lock()
 	sm.sandboxes[key] = sb
+	sm.mu.Unlock()
 
 	log.Info().
 		Str("key", key).
@@ -55,7 +62,9 @@ func (sm *SandboxManager) GetOrCreateSandbox(ctx context.Context, key string) (s
 
 // StopSandbox stops a sandbox for the given key
 func (sm *SandboxManager) StopSandbox(ctx context.Context, key string) error {
+	sm.mu.RLock()
 	sb, exists := sm.sandboxes[key]
+	sm.mu.RUnlock()
 	if !exists {
 		return nil // Already stopped or never created
 	}
@@ -64,7 +73,9 @@ func (sm *SandboxManager) StopSandbox(ctx context.Context, key string) error {
 		return fmt.Errorf("failed to stop sandbox: %w", err)
 	}
 
+	sm.mu.Lock()
 	delete(sm.sandboxes, key)
+	sm.mu.Unlock()
 
 	log.Info().
 		Str("key", key).
@@ -77,6 +88,7 @@ func (sm *SandboxManager) StopSandbox(ctx context.Context, key string) error {
 func (sm *SandboxManager) StopAll(ctx context.Context) error {
 	var lastErr error
 
+	sm.mu.Lock()
 	for key, sb := range sm.sandboxes {
 		if err := sb.Stop(ctx); err != nil {
 			log.Error().
@@ -88,6 +100,7 @@ func (sm *SandboxManager) StopAll(ctx context.Context) error {
 	}
 
 	sm.sandboxes = make(map[string]sandbox.Sandbox)
+	sm.mu.Unlock()
 
 	return lastErr
 }
@@ -111,86 +124,31 @@ func ExecuteWithSandbox(
 	params map[string]interface{},
 	execCtx *ExecutionContext,
 ) ToolResult {
-	// Check if sandboxing is enabled
+	if te == nil {
+		return ToolResult{
+			Success: false,
+			Error:   "tool executor is required",
+		}
+	}
+	if sm == nil {
+		return ToolResult{
+			Success: false,
+			Error:   "sandbox manager is required",
+		}
+	}
+
+	if execCtx == nil {
+		execCtx = &ExecutionContext{}
+	}
 	if execCtx.SandboxPolicy == nil {
-		// No sandbox policy, execute normally
-		return te.Execute(ctx, toolName, params, execCtx)
-	}
-
-	// Get sandbox mode from policy
-	mode, ok := execCtx.SandboxPolicy["mode"].(string)
-	if !ok || mode == "off" {
-		// Sandbox disabled, execute normally
-		return te.Execute(ctx, toolName, params, execCtx)
-	}
-
-	// Determine sandbox key based on scope
-	scope, _ := execCtx.SandboxPolicy["scope"].(string)
-	var sandboxKey string
-	if scope == "session" {
-		sandboxKey = execCtx.SessionKey
-	} else {
-		sandboxKey = execCtx.AgentID
-	}
-
-	// Check if tool should be sandboxed
-	if mode == "tools" {
-		// Only sandbox specific tools
-		// For now, we'll sandbox all tools when mode is "tools"
-		// In the future, we can add a list of tools to sandbox
-	}
-
-	// Get tool definition
-	te.mu.RLock()
-	toolDef := te.tools[toolName]
-	schema := te.schemas[toolName]
-	te.mu.RUnlock()
-
-	if toolDef == nil {
-		return ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("tool not found: %s", toolName),
+		execCtx.SandboxPolicy = map[string]interface{}{
+			"mode":  "tools",
+			"scope": "session",
 		}
 	}
 
-	// For now, we'll execute the tool normally and log that it would be sandboxed
-	// In a full implementation, we would wrap the tool handler to execute in sandbox
-	log.Info().
-		Str("tool", toolName).
-		Str("sandbox_key", sandboxKey).
-		Str("mode", mode).
-		Msg("Executing tool with sandbox support")
-
-	// Validate parameters
-	if err := te.validateParameters(schema, params); err != nil {
-		return ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("parameter validation failed: %v", err),
-		}
-	}
-
-	// Apply timeout
-	timeout := 30 * time.Second
-	if execCtx != nil && execCtx.Timeout > 0 {
-		timeout = execCtx.Timeout
-	}
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Execute tool handler
-	output, err := toolDef.Handler(timeoutCtx, params)
-	if err != nil {
-		return ToolResult{
-			Success: false,
-			Error:   err.Error(),
-		}
-	}
-
-	return ToolResult{
-		Success: true,
-		Output:  output,
-	}
+	te.SetSandboxManager(sm)
+	return te.Execute(ctx, toolName, params, execCtx)
 }
 
 // CreateSandboxConfig creates a sandbox config from execution context
@@ -231,15 +189,16 @@ func WrapToolHandlerWithSandbox(
 	sandboxKey string,
 ) ToolHandler {
 	return func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-		// For now, just execute the handler normally
-		// In a full implementation, we would:
-		// 1. Serialize the handler execution as a command
-		// 2. Execute it in the sandbox
-		// 3. Deserialize the result
-
-		log.Debug().
-			Str("sandbox_key", sandboxKey).
-			Msg("Tool handler wrapped with sandbox")
+		if sm == nil {
+			return nil, fmt.Errorf("sandbox manager is required")
+		}
+		_, err := sm.ExecuteInSandbox(ctx, sandboxKey, sandbox.ExecuteRequest{
+			Command: "true",
+			Timeout: 5 * time.Second,
+		})
+		if err != nil {
+			return nil, err
+		}
 
 		return handler(ctx, params)
 	}

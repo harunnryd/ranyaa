@@ -8,12 +8,14 @@ import (
 
 // PolicyEngine manages tool access policies
 type PolicyEngine struct {
-	// Future: Add policy storage, caching, etc.
+	evaluationStrategy string
 }
 
 // NewPolicyEngine creates a new policy engine
 func NewPolicyEngine() *PolicyEngine {
-	return &PolicyEngine{}
+	return &PolicyEngine{
+		evaluationStrategy: "allow-list-with-deny-override",
+	}
 }
 
 // EvaluatePolicy evaluates if a tool execution should be allowed

@@ -7,6 +7,7 @@ import (
 
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/logger"
+	"github.com/harun/ranya/pkg/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,19 @@ func TestNewRouter(t *testing.T) {
 }
 
 func TestRouteMessage(t *testing.T) {
+	origNewAgentRunner := newAgentRunner
+	newAgentRunner = func(cfg agent.Config) (*agent.Runner, error) {
+		cfg.ProviderFactory = fixedProviderFactory{
+			provider: &scriptedProvider{
+				responses: []*agent.LLMResponse{{Content: "ok"}},
+			},
+		}
+		return agent.NewRunner(cfg)
+	}
+	defer func() {
+		newAgentRunner = origNewAgentRunner
+	}()
+
 	tmpDir := t.TempDir()
 
 	cfg := config.DefaultConfig()

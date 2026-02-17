@@ -22,8 +22,10 @@ import (
 	"github.com/harun/ranya/pkg/memory"
 	"github.com/harun/ranya/pkg/node"
 	"github.com/harun/ranya/pkg/orchestrator"
+	"github.com/harun/ranya/pkg/planner"
 	"github.com/harun/ranya/pkg/plugin"
 	"github.com/harun/ranya/pkg/routing"
+	"github.com/harun/ranya/pkg/sandbox"
 	"github.com/harun/ranya/pkg/session"
 	"github.com/harun/ranya/pkg/subagent"
 	"github.com/harun/ranya/pkg/toolexecutor"
@@ -46,6 +48,7 @@ type Daemon struct {
 	browserContext *browser.BrowserServerContext
 	pluginRuntime  *plugin.PluginRuntime
 	orchestrator   *orchestrator.Orchestrator
+	planner       *planner.Planner
 	subagentCoord  *subagent.Coordinator
 
 	// Services
@@ -156,6 +159,13 @@ func (d *Daemon) initializeCoreModules() error {
 
 	// 4. Tool Executor
 	d.toolExecutor = toolexecutor.New()
+	sandboxCfg := sandbox.DefaultConfig()
+	sandboxCfg.Mode = sandbox.ModeTools
+	sandboxCfg.Scope = sandbox.ScopeSession
+	if d.config.WorkspacePath != "" {
+		sandboxCfg.FilesystemAccess.AllowedPaths = append(sandboxCfg.FilesystemAccess.AllowedPaths, d.config.WorkspacePath)
+	}
+	d.toolExecutor.SetSandboxManager(toolexecutor.NewSandboxManager(sandboxCfg))
 	d.logger.Info().Msg("Tool executor initialized")
 
 	// 5. Register memory tools with tool executor
@@ -246,9 +256,16 @@ func (d *Daemon) initializeCoreModules() error {
 	d.orchestrator = orchestrator.New(
 		orchestrator.WithMaxConcurrent(10),
 	)
+	if err := d.registerOrchestratorAgents(); err != nil {
+		return fmt.Errorf("failed to register orchestrator agents: %w", err)
+	}
 	d.logger.Info().Msg("Orchestrator initialized")
 
-	// 13. Subagent Coordinator
+	// 13. Planner
+	d.planner = planner.NewPlanner()
+	d.logger.Info().Msg("Planner initialized")
+
+	// 14. Subagent Coordinator
 	subagentCoord, err := subagent.NewCoordinator(subagent.Config{
 		RegistryPath: d.config.DataDir + "/subagents.json",
 		AutoSave:     true,
@@ -274,6 +291,7 @@ func (d *Daemon) initializeServices() error {
 		SharedSecret:   d.config.Gateway.SharedSecret,
 		CommandQueue:   d.queue,
 		AgentRunner:    d.agentRunner,
+		AgentDispatcher: d.dispatchGatewayRequest,
 		SessionManager: d.sessionMgr,
 		MemoryManager:  d.memoryMgr,
 		Logger:         d.logger.GetZerolog(),
@@ -343,6 +361,7 @@ func (d *Daemon) initializeServices() error {
 			sessionKey := fmt.Sprintf("cron:%s", job.ID)
 			ctx := tracing.NewRequestContext(d.ctx)
 			ctx = tracing.WithSessionKey(ctx, sessionKey)
+			ctx = tracing.WithRunID(ctx, tracing.NewRunID())
 			logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog()).With().
 				Str("session_key", sessionKey).
 				Str("job_id", job.ID).
@@ -356,11 +375,16 @@ func (d *Daemon) initializeServices() error {
 			agentCfg.UseMemory = true
 
 			logger.Info().Str("message", message).Msg("Executing cron agent job")
-			_, runErr := d.agentRunner.RunWithContext(ctx, agent.AgentRunParams{
-				Prompt:     message,
+			_, runErr := d.router.RouteMessageAndWait(ctx, Message{
 				SessionKey: sessionKey,
-				Config:     agentCfg,
+				Source:     "cron",
+				Content:    message,
+				AgentID:    "default",
+				RunConfig:  agentCfg,
 				CWD:        d.config.WorkspacePath,
+				Metadata: map[string]interface{}{
+					"job_id": job.ID,
+				},
 			})
 			if runErr != nil {
 				logger.Error().Err(runErr).Msg("Cron agent job failed")
@@ -868,6 +892,11 @@ func (d *Daemon) GetPluginRuntime() *plugin.PluginRuntime {
 // GetOrchestrator returns the orchestrator
 func (d *Daemon) GetOrchestrator() *orchestrator.Orchestrator {
 	return d.orchestrator
+}
+
+// GetPlanner returns the planner.
+func (d *Daemon) GetPlanner() *planner.Planner {
+	return d.planner
 }
 
 // GetSubagentCoordinator returns the subagent coordinator

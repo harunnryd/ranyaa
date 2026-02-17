@@ -32,6 +32,7 @@ type Server struct {
 	broadcaster    *EventBroadcaster
 	commandQueue   *commandqueue.CommandQueue
 	agentRunner    *agent.Runner
+	agentDispatcher AgentDispatcher
 	sessionManager *session.SessionManager
 	memoryManager  *memory.Manager
 	logger         zerolog.Logger
@@ -46,10 +47,25 @@ type Config struct {
 	SharedSecret   string
 	CommandQueue   *commandqueue.CommandQueue
 	AgentRunner    *agent.Runner
+	AgentDispatcher AgentDispatcher
 	SessionManager *session.SessionManager
 	MemoryManager  *memory.Manager
 	Logger         zerolog.Logger
 }
+
+// AgentDispatchRequest carries an ingress request into the canonical runtime flow.
+type AgentDispatchRequest struct {
+	Prompt     string
+	SessionKey string
+	Source     string
+	AgentID    string
+	Config     agent.AgentConfig
+	CWD        string
+	Metadata   map[string]interface{}
+}
+
+// AgentDispatcher routes requests into the daemon runtime pipeline.
+type AgentDispatcher func(ctx context.Context, req AgentDispatchRequest) (agent.AgentResult, error)
 
 // NewServer creates a new Gateway Server
 func NewServer(cfg Config) (*Server, error) {
@@ -64,6 +80,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.AgentRunner == nil {
 		return nil, fmt.Errorf("agent runner is required")
+	}
+	if cfg.AgentDispatcher == nil {
+		return nil, fmt.Errorf("agent dispatcher is required")
 	}
 	if cfg.SessionManager == nil {
 		return nil, fmt.Errorf("session manager is required")
@@ -83,6 +102,7 @@ func NewServer(cfg Config) (*Server, error) {
 		broadcaster:    broadcaster,
 		commandQueue:   cfg.CommandQueue,
 		agentRunner:    cfg.AgentRunner,
+		agentDispatcher: cfg.AgentDispatcher,
 		sessionManager: cfg.SessionManager,
 		memoryManager:  cfg.MemoryManager,
 		logger:         cfg.Logger,

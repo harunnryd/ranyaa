@@ -3,11 +3,13 @@ package toolexecutor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/harun/ranya/internal/observability"
 	"github.com/harun/ranya/internal/tracing"
+	"github.com/harun/ranya/pkg/sandbox"
 	"github.com/rs/zerolog/log"
 	"github.com/xeipuuv/gojsonschema"
 	"go.opentelemetry.io/otel/attribute"
@@ -59,6 +61,7 @@ type ToolDefinition struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  []ToolParameter `json:"parameters"`
+	Category    ToolCategory    `json:"category,omitempty"`
 	Handler     ToolHandler     `json:"-"`
 	PluginID    string          `json:"plugin_id,omitempty"`   // Plugin ID if this is a plugin tool
 	Permissions []string        `json:"permissions,omitempty"` // Plugin permissions for approval decisions
@@ -93,6 +96,9 @@ type ToolExecutor struct {
 	sandboxManager  *SandboxManager
 	approvalManager *ApprovalManager
 	pluginRuntime   PluginToolExecutor
+	policyEngine    *PolicyEngine
+	policyEvaluator *PolicyEvaluator
+	toolRegistry    *ToolRegistry
 	mu              sync.RWMutex
 }
 
@@ -103,10 +109,13 @@ func New() *ToolExecutor {
 	te := &ToolExecutor{
 		tools:           make(map[string]*ToolDefinition),
 		schemas:         make(map[string]*gojsonschema.Schema),
-		sandboxManager:  nil, // Sandbox is optional
+		sandboxManager:  nil,
 		approvalManager: nil, // Approval is optional
 		pluginRuntime:   nil, // Plugin runtime is optional
+		policyEngine:    NewPolicyEngine(),
+		toolRegistry:    NewToolRegistry(),
 	}
+	te.policyEvaluator = NewPolicyEvaluator(te.policyEngine)
 
 	log.Info().Msg("Tool executor initialized")
 
@@ -198,10 +207,15 @@ func (te *ToolExecutor) RegisterPluginTool(pluginID string, toolDef ToolDefiniti
 	}
 
 	// Create tool definition with the handler and plugin metadata
+	category := toolDef.Category
+	if category == "" {
+		category = inferToolCategory(toolName, toolDef.Description)
+	}
 	wrappedDef := ToolDefinition{
 		Name:        toolName,
 		Description: fmt.Sprintf("[Plugin: %s] %s", pluginID, toolDef.Description),
 		Parameters:  toolDef.Parameters,
+		Category:    category,
 		Handler:     handler,
 		PluginID:    pluginID,
 		Permissions: pluginPermissions,
@@ -219,6 +233,7 @@ func (te *ToolExecutor) RegisterPluginTool(pluginID string, toolDef ToolDefiniti
 
 	te.tools[toolName] = &wrappedDef
 	te.schemas[toolName] = schema
+	_ = te.toolRegistry.Register(toolName, wrappedDef.Description, wrappedDef.Category)
 
 	log.Info().
 		Str("tool", toolName).
@@ -246,6 +261,10 @@ func (te *ToolExecutor) SetApprovalManager(manager *ApprovalManager) {
 
 // RegisterTool registers a new tool
 func (te *ToolExecutor) RegisterTool(def ToolDefinition) error {
+	if def.Category == "" {
+		def.Category = inferToolCategory(def.Name, def.Description)
+	}
+
 	// Validate tool definition
 	if err := te.validateToolDefinition(def); err != nil {
 		return fmt.Errorf("invalid tool definition: %w", err)
@@ -262,6 +281,7 @@ func (te *ToolExecutor) RegisterTool(def ToolDefinition) error {
 
 	te.tools[def.Name] = &def
 	te.schemas[def.Name] = schema
+	_ = te.toolRegistry.Register(def.Name, def.Description, def.Category)
 
 	log.Info().Str("tool", def.Name).Msg("Tool registered")
 
@@ -275,6 +295,10 @@ func (te *ToolExecutor) UnregisterTool(name string) {
 
 	delete(te.tools, name)
 	delete(te.schemas, name)
+	if te.toolRegistry != nil {
+		delete(te.toolRegistry.tools, name)
+		delete(te.toolRegistry.categories, name)
+	}
 
 	log.Info().Str("tool", name).Msg("Tool unregistered")
 }
@@ -313,6 +337,12 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if tracing.GetTraceID(ctx) == "" {
+		ctx = tracing.NewRequestContext(ctx)
+	}
+	if tracing.GetRunID(ctx) == "" {
+		ctx = tracing.WithRunID(ctx, tracing.NewRunID())
+	}
 	if execCtx != nil && execCtx.SessionKey != "" && tracing.GetSessionKey(ctx) == "" {
 		ctx = tracing.WithSessionKey(ctx, execCtx.SessionKey)
 	}
@@ -327,53 +357,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 	logger := tracing.LoggerFromContext(ctx, log.Logger)
 	startTime := time.Now()
-
-	// Check tool policy if provided
-	if execCtx != nil && execCtx.ToolPolicy != nil {
-		if !execCtx.ToolPolicy.IsToolAllowed(toolName) {
-			logger.Warn().
-				Str("tool", toolName).
-				Str("agent_id", execCtx.AgentID).
-				Msg("Tool execution blocked by policy")
-			duration := time.Since(startTime)
-			observability.RecordToolExecution(toolName, duration, false)
-			span.SetStatus(codes.Error, "tool blocked by policy")
-			return ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("tool '%s' is not allowed by agent policy", toolName),
-				Metadata: map[string]interface{}{
-					"policy_violation": true,
-					"agent_id":         execCtx.AgentID,
-				},
-			}
-		}
-	}
-
-	// Check if sandbox is enabled
-	te.mu.RLock()
-	sandboxManager := te.sandboxManager
-	te.mu.RUnlock()
-
-	if sandboxManager != nil && execCtx != nil && execCtx.SandboxPolicy != nil {
-		// Check if sandboxing is enabled
-		mode, ok := execCtx.SandboxPolicy["mode"].(string)
-		if ok && mode != "off" {
-			// Use sandbox for execution
-			result := ExecuteWithSandbox(ctx, te, sandboxManager, toolName, params, execCtx)
-			duration := time.Since(startTime)
-			observability.RecordToolExecution(toolName, duration, result.Success)
-			if !result.Success && result.Error != "" {
-				span.SetStatus(codes.Error, result.Error)
-			}
-			return result
-		}
-	}
-
-	// Get tool
-	te.mu.RLock()
-	tool := te.tools[toolName]
-	schema := te.schemas[toolName]
-	te.mu.RUnlock()
+	tool, schema, category, sandboxManager := te.lookup(toolName)
 
 	if tool == nil {
 		logger.Error().Str("tool", toolName).Msg("Tool not found")
@@ -383,6 +367,45 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		return ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("tool not found: %s", toolName),
+		}
+	}
+
+	agentID, policy := policyContext(execCtx)
+	eval := te.policyEvaluator.Evaluate(toolName, policy, agentID)
+	decision := "allow"
+	if !eval.Allowed {
+		decision = "deny"
+	}
+	logger.Info().
+		Str("event", "tool:policy_decision").
+		Str("tool", toolName).
+		Str("category", string(category)).
+		Str("agent_id", agentID).
+		Str("decision", decision).
+		Str("reason", eval.Reason).
+		Msg("tool:policy_decision")
+
+	if !eval.Allowed {
+		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, false)
+		span.SetStatus(codes.Error, "tool blocked by policy")
+		logger.Warn().
+			Str("event", "tool:denied").
+			Str("tool", toolName).
+			Str("category", string(category)).
+			Str("agent_id", agentID).
+			Str("reason", eval.Reason).
+			Msg("tool:denied")
+
+		metadata := cloneMetadata(eval.Metadata)
+		metadata["reason"] = eval.Reason
+		metadata["decision"] = decision
+		metadata["category"] = string(category)
+
+		return ToolResult{
+			Success:  false,
+			Error:    fmt.Sprintf("tool '%s' denied by policy: %s", toolName, eval.Reason),
+			Metadata: metadata,
 		}
 	}
 
@@ -398,8 +421,6 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Error:   fmt.Sprintf("parameter validation failed: %v", err),
 		}
 	}
-
-	logger.Debug().Str("tool", toolName).Msg("Executing tool")
 
 	// Apply timeout
 	timeout := 30 * time.Second
@@ -461,6 +482,47 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		}
 	}
 
+	if isRiskyCategory(category) {
+		if sandboxManager == nil {
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, false)
+			err := fmt.Errorf("sandbox manager is required for risky tool category '%s'", category)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return ToolResult{
+				Success: false,
+				Error:   err.Error(),
+				Metadata: map[string]interface{}{
+					"category": string(category),
+					"decision": "deny",
+					"reason":   "sandbox manager not configured",
+				},
+			}
+		}
+
+		if err := te.executeSandboxGate(ctx, sandboxManager, toolName, category, execCtx, timeout); err != nil {
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, false)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return ToolResult{
+				Success: false,
+				Error:   err.Error(),
+				Metadata: map[string]interface{}{
+					"category": string(category),
+					"decision": "deny",
+					"reason":   err.Error(),
+				},
+			}
+		}
+	}
+
+	logger.Info().
+		Str("event", "tool:execute").
+		Str("tool", toolName).
+		Str("category", string(category)).
+		Msg("tool:execute")
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -499,6 +561,9 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Metadata: map[string]interface{}{
 				"duration": duration.Milliseconds(),
 				"plugin":   tool.PluginID,
+				"category": string(category),
+				"decision": decision,
+				"reason":   eval.Reason,
 			},
 		}
 
@@ -520,6 +585,9 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Metadata: map[string]interface{}{
 				"duration": duration.Milliseconds(),
 				"plugin":   tool.PluginID,
+				"category": string(category),
+				"decision": decision,
+				"reason":   err.Error(),
 			},
 		}
 
@@ -540,9 +608,133 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Metadata: map[string]interface{}{
 				"duration": duration.Milliseconds(),
 				"plugin":   tool.PluginID,
+				"category": string(category),
+				"decision": decision,
+				"reason":   "timeout",
 			},
 		}
 	}
+}
+
+func (te *ToolExecutor) lookup(toolName string) (*ToolDefinition, *gojsonschema.Schema, ToolCategory, *SandboxManager) {
+	te.mu.RLock()
+	defer te.mu.RUnlock()
+
+	tool := te.tools[toolName]
+	schema := te.schemas[toolName]
+	category := CategoryGeneral
+	if tool != nil {
+		if tool.Category != "" {
+			category = tool.Category
+		} else if registered, err := te.toolRegistry.GetCategory(toolName); err == nil {
+			category = registered
+		} else {
+			category = inferToolCategory(toolName, tool.Description)
+		}
+	}
+
+	return tool, schema, category, te.sandboxManager
+}
+
+func policyContext(execCtx *ExecutionContext) (string, *ToolPolicy) {
+	if execCtx == nil {
+		return "", nil
+	}
+	return execCtx.AgentID, execCtx.ToolPolicy
+}
+
+func cloneMetadata(src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		return map[string]interface{}{}
+	}
+
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func isRiskyCategory(category ToolCategory) bool {
+	switch category {
+	case CategoryShell, CategoryWrite, CategoryWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+func (te *ToolExecutor) executeSandboxGate(
+	ctx context.Context,
+	sandboxManager *SandboxManager,
+	toolName string,
+	category ToolCategory,
+	execCtx *ExecutionContext,
+	timeout time.Duration,
+) error {
+	logger := tracing.LoggerFromContext(ctx, log.Logger)
+	sandboxKey := sandboxKeyFromContext(execCtx)
+	if sandboxKey == "" {
+		sandboxKey = "global"
+	}
+
+	logger.Info().
+		Str("event", "sandbox:execute").
+		Str("tool", toolName).
+		Str("category", string(category)).
+		Str("sandbox_key", sandboxKey).
+		Msg("sandbox:execute")
+
+	req := sandbox.ExecuteRequest{
+		Command: "true",
+		Timeout: timeout,
+	}
+	if execCtx != nil {
+		req.WorkingDir = execCtx.WorkingDir
+	}
+
+	if _, err := sandboxManager.ExecuteInSandbox(ctx, sandboxKey, req); err != nil {
+		return fmt.Errorf("sandbox execution failed for tool '%s': %w", toolName, err)
+	}
+
+	return nil
+}
+
+func sandboxKeyFromContext(execCtx *ExecutionContext) string {
+	if execCtx == nil {
+		return ""
+	}
+
+	scope := "session"
+	if execCtx.SandboxPolicy != nil {
+		if rawScope, ok := execCtx.SandboxPolicy["scope"].(string); ok && rawScope != "" {
+			scope = rawScope
+		}
+	}
+
+	if scope == "agent" && execCtx.AgentID != "" {
+		return execCtx.AgentID
+	}
+	if execCtx.SessionKey != "" {
+		return execCtx.SessionKey
+	}
+	return execCtx.AgentID
+}
+
+func inferToolCategory(name string, description string) ToolCategory {
+	normalizedName := strings.ToLower(name)
+	normalizedDescription := strings.ToLower(description)
+
+	if strings.HasPrefix(normalizedName, "browser_") || strings.Contains(normalizedDescription, "browser") {
+		return CategoryWeb
+	}
+	if normalizedName == "memory_write" || normalizedName == "memory_delete" {
+		return CategoryWrite
+	}
+	if normalizedName == "memory_search" || normalizedName == "memory_list" {
+		return CategoryRead
+	}
+	return CategoryGeneral
 }
 
 // validateToolDefinition validates a tool definition

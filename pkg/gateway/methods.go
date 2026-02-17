@@ -83,13 +83,16 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 
 	ctx := tracing.NewRequestContext(context.Background())
 	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	ctx = tracing.WithRunID(ctx, tracing.NewRunID())
 
-	// Execute agent
-	result, err := s.agentRunner.RunWithContext(ctx, agent.AgentRunParams{
+	result, err := s.agentDispatcher(ctx, AgentDispatchRequest{
 		Prompt:     prompt,
 		SessionKey: sessionKey,
+		Source:     "gateway",
+		AgentID:    "default",
 		Config:     config,
 		CWD:        cwd,
+		Metadata:   params,
 	})
 
 	if err != nil {

@@ -9,12 +9,14 @@ import (
 
 // Planner generates execution plans for complex tasks
 type Planner struct {
-	// Future: could add LLM integration for AI-powered planning
+	planningMode string
 }
 
 // NewPlanner creates a new planner instance
 func NewPlanner() *Planner {
-	return &Planner{}
+	return &Planner{
+		planningMode: "rule-based",
+	}
 }
 
 // GeneratePlan creates a plan with the given description and steps

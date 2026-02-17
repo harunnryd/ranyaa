@@ -98,7 +98,13 @@ func (r *Runner) RunWithContext(ctx context.Context, params AgentRunParams) (Age
 	if tracing.GetTraceID(ctx) == "" {
 		ctx = tracing.NewRequestContext(ctx)
 	}
+	if tracing.GetRunID(ctx) == "" {
+		ctx = tracing.WithRunID(ctx, tracing.NewRunID())
+	}
 	ctx = tracing.WithSessionKey(ctx, params.SessionKey)
+	if params.AgentID != "" {
+		ctx = tracing.WithAgentID(ctx, params.AgentID)
+	}
 	ctx, span := tracing.StartSpan(
 		ctx,
 		"ranya.agent",
@@ -585,6 +591,9 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 					SessionKey: params.SessionKey,
 					WorkingDir: params.CWD,
 					Timeout:    30 * time.Second,
+					AgentID:    params.AgentID,
+					ToolPolicy: params.ToolPolicy,
+					SandboxPolicy: params.SandboxPolicy,
 				},
 			)
 
