@@ -13,13 +13,17 @@ import (
 	"github.com/harun/ranya/internal/logger"
 	"github.com/harun/ranya/internal/telegram"
 	"github.com/harun/ranya/pkg/agent"
+	"github.com/harun/ranya/pkg/browser"
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/cron"
 	"github.com/harun/ranya/pkg/gateway"
 	"github.com/harun/ranya/pkg/memory"
 	"github.com/harun/ranya/pkg/node"
+	"github.com/harun/ranya/pkg/orchestrator"
+	"github.com/harun/ranya/pkg/plugin"
 	"github.com/harun/ranya/pkg/routing"
 	"github.com/harun/ranya/pkg/session"
+	"github.com/harun/ranya/pkg/subagent"
 	"github.com/harun/ranya/pkg/toolexecutor"
 	"github.com/harun/ranya/pkg/webhook"
 	"github.com/harun/ranya/pkg/workspace"
@@ -31,12 +35,16 @@ type Daemon struct {
 	logger *logger.Logger
 
 	// Core modules
-	queue        *commandqueue.CommandQueue
-	sessionMgr   *session.SessionManager
-	memoryMgr    *memory.Manager
-	toolExecutor *toolexecutor.ToolExecutor
-	agentRunner  *agent.Runner
-	workspaceMgr *workspace.WorkspaceManager
+	queue          *commandqueue.CommandQueue
+	sessionMgr     *session.SessionManager
+	memoryMgr      *memory.Manager
+	toolExecutor   *toolexecutor.ToolExecutor
+	agentRunner    *agent.Runner
+	workspaceMgr   *workspace.WorkspaceManager
+	browserContext *browser.BrowserServerContext
+	pluginRuntime  *plugin.PluginRuntime
+	orchestrator   *orchestrator.Orchestrator
+	subagentCoord  *subagent.Coordinator
 
 	// Services
 	gatewayServer  *gateway.Server
@@ -167,6 +175,59 @@ func (d *Daemon) initializeCoreModules() error {
 	// 9. Session Cleanup
 	d.cleanup = session.NewCleanup(d.sessionMgr, 7*24*time.Hour)
 	d.logger.Info().Msg("Session cleanup initialized")
+
+	// 10. Browser Context
+	browserConfigPath := d.config.DataDir + "/browser.json"
+	browserBaseDir := d.config.DataDir + "/browser"
+	browserContext, err := browser.NewBrowserServerContext(browserConfigPath, browserBaseDir)
+	if err != nil {
+		return fmt.Errorf("failed to create browser context: %w", err)
+	}
+	if err := browserContext.Initialize(d.ctx); err != nil {
+		return fmt.Errorf("failed to initialize browser context: %w", err)
+	}
+	d.browserContext = browserContext
+	d.logger.Info().Msg("Browser context initialized")
+
+	// 11. Plugin Runtime
+	pluginRuntime := plugin.NewPluginRuntime(d.logger.GetZerolog(), plugin.PluginRuntimeConfig{
+		BuiltinDir:    d.config.DataDir + "/plugins/builtin",
+		WorkspaceDir:  d.config.WorkspacePath + "/.ranya/plugins",
+		ExtraDirs:     []string{},
+		PluginConfigs: make(map[string]map[string]any),
+	})
+	loadResult, err := pluginRuntime.Initialize()
+	if err != nil {
+		d.logger.Warn().Err(err).Msg("Plugin runtime initialization had errors")
+	}
+	if loadResult != nil {
+		d.logger.Info().
+			Int("loaded", len(loadResult.Loaded)).
+			Int("failed", len(loadResult.Failed)).
+			Msg("Plugin runtime initialized")
+	}
+	d.pluginRuntime = pluginRuntime
+
+	// 12. Orchestrator
+	d.orchestrator = orchestrator.New(
+		orchestrator.WithMaxConcurrent(10),
+	)
+	d.logger.Info().Msg("Orchestrator initialized")
+
+	// 13. Subagent Coordinator
+	subagentCoord, err := subagent.NewCoordinator(subagent.Config{
+		RegistryPath: d.config.DataDir + "/subagents.json",
+		AutoSave:     true,
+		Logger:       d.logger.GetZerolog(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create subagent coordinator: %w", err)
+	}
+	if err := subagentCoord.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize subagent coordinator: %w", err)
+	}
+	d.subagentCoord = subagentCoord
+	d.logger.Info().Msg("Subagent coordinator initialized")
 
 	return nil
 }
@@ -424,6 +485,34 @@ func (d *Daemon) Stop() error {
 		}
 	}
 
+	// Stop browser context
+	if d.browserContext != nil {
+		if err := d.browserContext.Shutdown(d.ctx); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to shutdown browser context")
+		}
+	}
+
+	// Stop plugin runtime
+	if d.pluginRuntime != nil {
+		if err := d.pluginRuntime.Shutdown(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to shutdown plugin runtime")
+		}
+	}
+
+	// Stop orchestrator
+	if d.orchestrator != nil {
+		if err := d.orchestrator.Shutdown(d.ctx); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to shutdown orchestrator")
+		}
+	}
+
+	// Stop subagent coordinator
+	if d.subagentCoord != nil {
+		if err := d.subagentCoord.Close(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to close subagent coordinator")
+		}
+	}
+
 	// Cancel context
 	d.cancel()
 
@@ -586,4 +675,24 @@ func (d *Daemon) GetNodeManager() *node.NodeManager {
 // GetRoutingService returns the routing service
 func (d *Daemon) GetRoutingService() *routing.RoutingService {
 	return d.routingService
+}
+
+// GetBrowserContext returns the browser context
+func (d *Daemon) GetBrowserContext() *browser.BrowserServerContext {
+	return d.browserContext
+}
+
+// GetPluginRuntime returns the plugin runtime
+func (d *Daemon) GetPluginRuntime() *plugin.PluginRuntime {
+	return d.pluginRuntime
+}
+
+// GetOrchestrator returns the orchestrator
+func (d *Daemon) GetOrchestrator() *orchestrator.Orchestrator {
+	return d.orchestrator
+}
+
+// GetSubagentCoordinator returns the subagent coordinator
+func (d *Daemon) GetSubagentCoordinator() *subagent.Coordinator {
+	return d.subagentCoord
 }

@@ -19,6 +19,7 @@ func TestNewLifecycleManager(t *testing.T) {
 	cfg.WorkspacePath = tmpDir + "/workspace"
 	cfg.AI.Profiles = []config.AIProfile{{ID: "test-profile", Provider: "anthropic", APIKey: "sk-ant-test123", Priority: 1}}
 	cfg.Channels.Telegram.Enabled = false
+	cfg.Gateway.SharedSecret = "test-secret"
 
 	// Create workspace directory
 	err := os.MkdirAll(cfg.WorkspacePath, 0755)
@@ -49,6 +50,7 @@ func TestLifecycleManagerStartStop(t *testing.T) {
 	cfg.WorkspacePath = tmpDir + "/workspace"
 	cfg.AI.Profiles = []config.AIProfile{{ID: "test-profile", Provider: "anthropic", APIKey: "sk-ant-test123", Priority: 1}}
 	cfg.Channels.Telegram.Enabled = false
+	cfg.Gateway.SharedSecret = "test-secret"
 
 	// Create workspace directory
 	err := os.MkdirAll(cfg.WorkspacePath, 0755)
@@ -92,6 +94,7 @@ func TestLifecycleManagerGetPID(t *testing.T) {
 	cfg.WorkspacePath = tmpDir + "/workspace"
 	cfg.AI.Profiles = []config.AIProfile{{ID: "test-profile", Provider: "anthropic", APIKey: "sk-ant-test123", Priority: 1}}
 	cfg.Channels.Telegram.Enabled = false
+	cfg.Gateway.SharedSecret = "test-secret"
 
 	// Create workspace directory
 	err := os.MkdirAll(cfg.WorkspacePath, 0755)

@@ -108,9 +108,15 @@ func (s *Server) Start() error {
 
 	s.logger.Info().Int("port", s.port).Msg("Starting Gateway Server")
 
-	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
+	// Start server in goroutine so it doesn't block
+	go func() {
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Error().Err(err).Msg("Gateway server error")
+		}
+	}()
+
+	// Give the server a moment to start
+	time.Sleep(50 * time.Millisecond)
 
 	return nil
 }

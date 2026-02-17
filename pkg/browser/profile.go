@@ -225,12 +225,28 @@ func (pc *ProfileContext) EnsureTabAvailable(ctx context.Context) (*rod.Page, st
 		return nil, "", err
 	}
 
-	// Try to get a page from the pool
-	page, targetID, err := pc.pool.Acquire(ctx, "")
+	// Get existing pages
+	tabs, err := pc.session.ListPages()
 	if err != nil {
 		return nil, "", err
 	}
 
+	// If we have pages, use the first one
+	if len(tabs) > 0 {
+		page, err := pc.session.GetPage(tabs[0].TargetID)
+		if err != nil {
+			return nil, "", err
+		}
+		return page, tabs[0].TargetID, nil
+	}
+
+	// Create a new page
+	page, err := pc.session.CreatePage(ctx, "")
+	if err != nil {
+		return nil, "", err
+	}
+
+	targetID := string(page.TargetID)
 	return page, targetID, nil
 }
 
@@ -267,7 +283,6 @@ func (pc *ProfileContext) Navigate(ctx context.Context, targetID string, params 
 	}
 
 	pc.metrics.TotalOps++
-	pc.pool.IncrementOperationCount(targetID)
 
 	return result, nil
 }
@@ -297,7 +312,6 @@ func (pc *ProfileContext) Screenshot(ctx context.Context, targetID string, param
 	}
 
 	pc.metrics.TotalOps++
-	pc.pool.IncrementOperationCount(targetID)
 
 	return result, nil
 }
@@ -347,7 +361,6 @@ func (pc *ProfileContext) Extract(ctx context.Context, targetID string, params E
 	}
 
 	pc.metrics.TotalOps++
-	pc.pool.IncrementOperationCount(targetID)
 
 	return &ExtractResult{
 		Type:     params.Type,
@@ -381,7 +394,6 @@ func (pc *ProfileContext) Execute(ctx context.Context, targetID string, params E
 	}
 
 	pc.metrics.TotalOps++
-	pc.pool.IncrementOperationCount(targetID)
 
 	return result, nil
 }
@@ -450,7 +462,6 @@ func (pc *ProfileContext) Interact(ctx context.Context, targetID string, params 
 	}
 
 	pc.metrics.TotalOps++
-	pc.pool.IncrementOperationCount(targetID)
 
 	return result, nil
 }
@@ -584,10 +595,11 @@ func (pc *ProfileContext) IsAvailable() bool {
 
 // GetPoolStats returns page pool statistics
 func (pc *ProfileContext) GetPoolStats() map[string]interface{} {
-	if pc.pool == nil {
-		return map[string]interface{}{}
+	// Pool not implemented yet - return basic stats
+	return map[string]interface{}{
+		"activePages": pc.metrics.ActivePages,
+		"totalOps":    pc.metrics.TotalOps,
 	}
-	return pc.pool.GetStats()
 }
 
 // SetCommandQueue sets the command queue reference
