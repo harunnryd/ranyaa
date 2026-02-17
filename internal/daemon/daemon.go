@@ -340,7 +340,34 @@ func (d *Daemon) initializeServices() error {
 			d.logger.Info().Str("text", text).Str("agentID", agentID).Msg("Cron system event")
 		},
 		RunIsolatedAgentJob: func(job *cron.Job, message string) error {
-			d.logger.Info().Str("jobID", job.ID).Str("message", message).Msg("Cron agent job")
+			sessionKey := fmt.Sprintf("cron:%s", job.ID)
+			ctx := tracing.NewRequestContext(d.ctx)
+			ctx = tracing.WithSessionKey(ctx, sessionKey)
+			logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog()).With().
+				Str("session_key", sessionKey).
+				Str("job_id", job.ID).
+				Logger()
+
+			agentCfg := agent.DefaultConfig()
+			if len(d.config.Agents) > 0 {
+				agentCfg.Model = d.config.Agents[0].Model
+				agentCfg.SystemPrompt = d.config.Agents[0].SystemPrompt
+			}
+			agentCfg.UseMemory = true
+
+			logger.Info().Str("message", message).Msg("Executing cron agent job")
+			_, runErr := d.agentRunner.RunWithContext(ctx, agent.AgentRunParams{
+				Prompt:     message,
+				SessionKey: sessionKey,
+				Config:     agentCfg,
+				CWD:        d.config.WorkspacePath,
+			})
+			if runErr != nil {
+				logger.Error().Err(runErr).Msg("Cron agent job failed")
+				return runErr
+			}
+
+			logger.Info().Msg("Cron agent job completed")
 			return nil
 		},
 		RequestHeartbeatNow: func() {
