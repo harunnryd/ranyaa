@@ -291,7 +291,7 @@ func (bsc *BrowserServerContext) reloadConfig(ctx context.Context) error {
 	for name, pc := range bsc.profiles {
 		if _, exists := newProfiles[name]; !exists {
 			fmt.Printf("Removing profile: %s\n", name)
-			pc.Cleanup()
+			_ = pc.Cleanup()
 			delete(bsc.profiles, name)
 		}
 	}

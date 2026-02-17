@@ -60,7 +60,7 @@ func TestCommandQueue_SerialExecution(t *testing.T) {
 				mu.Unlock()
 				return nil, nil
 			}
-			cq.Enqueue("serial", task, nil)
+			_, _ = cq.Enqueue("serial", task, nil)
 		}()
 	}
 
@@ -88,7 +88,7 @@ func TestCommandQueue_ConcurrentLanes(t *testing.T) {
 				time.Sleep(50 * time.Millisecond)
 				return nil, nil
 			}
-			cq.Enqueue("lane1", task, nil)
+			_, _ = cq.Enqueue("lane1", task, nil)
 		}()
 	}
 
@@ -102,7 +102,7 @@ func TestCommandQueue_ConcurrentLanes(t *testing.T) {
 				time.Sleep(50 * time.Millisecond)
 				return nil, nil
 			}
-			cq.Enqueue("lane2", task, nil)
+			_, _ = cq.Enqueue("lane2", task, nil)
 		}()
 	}
 
@@ -137,7 +137,7 @@ func TestCommandQueue_ClearLane(t *testing.T) {
 				time.Sleep(1 * time.Second)
 				return nil, nil
 			}
-			cq.Enqueue("test", task, nil)
+			_, _ = cq.Enqueue("test", task, nil)
 		}()
 	}
 
@@ -167,7 +167,7 @@ func TestCommandQueue_WaitForActive(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 			return nil, nil
 		}
-		cq.Enqueue("test", task, nil)
+		_, _ = cq.Enqueue("test", task, nil)
 	}()
 
 	time.Sleep(10 * time.Millisecond)
@@ -254,7 +254,7 @@ func TestCommandQueue_EventOff(t *testing.T) {
 	})
 
 	// Enqueue task
-	queue.Enqueue("test", Task(func(ctx context.Context) (interface{}, error) {
+	_, _ = queue.Enqueue("test", Task(func(ctx context.Context) (interface{}, error) {
 		return nil, nil
 	}), nil)
 
@@ -265,7 +265,7 @@ func TestCommandQueue_EventOff(t *testing.T) {
 	queue.Off("enqueued")
 
 	// Enqueue another task
-	queue.Enqueue("test", Task(func(ctx context.Context) (interface{}, error) {
+	_, _ = queue.Enqueue("test", Task(func(ctx context.Context) (interface{}, error) {
 		return nil, nil
 	}), nil)
 

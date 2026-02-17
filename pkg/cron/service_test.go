@@ -119,7 +119,7 @@ func TestNewService(t *testing.T) {
 func TestAddJob(t *testing.T) {
 	t.Run("creates job with unique ID", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		job, err := service.AddJob(params)
@@ -136,7 +136,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("sets creation timestamp", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		before := Now()
 		job, err := service.AddJob(createTestJob())
@@ -150,7 +150,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("calculates next run time", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Schedule = Schedule{
@@ -167,7 +167,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("uses default agent ID", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.AgentID = ""
@@ -180,7 +180,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("validates schedule", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Schedule = Schedule{
@@ -195,7 +195,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("requires job name", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Name = ""
@@ -207,7 +207,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("persists job to disk", func(t *testing.T) {
 		service, _, storePath := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		_, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -219,7 +219,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("schedules enabled job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Enabled = true
@@ -237,7 +237,7 @@ func TestAddJob(t *testing.T) {
 
 	t.Run("does not schedule disabled job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Enabled = false
@@ -682,7 +682,7 @@ func TestPersistence(t *testing.T) {
 
 		job, err := service1.AddJob(createTestJob())
 		require.NoError(t, err)
-		service1.Stop()
+		_ = service1.Stop()
 
 		// Create second service with same store path
 		callbacks2 := newMockCallbacks()
@@ -698,7 +698,7 @@ func TestPersistence(t *testing.T) {
 
 		service2, err := NewService(opts2)
 		require.NoError(t, err)
-		defer service2.Stop()
+		defer func() { _ = service2.Stop() }()
 
 		// Check job was loaded
 		retrieved := service2.GetJob(job.ID)

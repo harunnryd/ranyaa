@@ -179,7 +179,7 @@ func (w *WorkspaceWatcher) handleFileAdded(path string) {
 
 	// If it's a directory, watch it recursively
 	if info, err := filepath.Glob(path); err == nil && len(info) > 0 {
-		w.addDirectoryRecursive(path)
+		_ = w.addDirectoryRecursive(path)
 	}
 }
 

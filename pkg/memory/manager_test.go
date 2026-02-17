@@ -380,7 +380,7 @@ func TestEmbeddingCache(t *testing.T) {
 	// Delete and recreate same file
 	os.Remove(filepath.Join(workspace, "test.md"))
 	m.MarkDirty()
-	m.Sync()
+	_ = m.Sync()
 
 	err = os.WriteFile(filepath.Join(workspace, "test.md"), []byte(content), 0644)
 	require.NoError(t, err)

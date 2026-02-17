@@ -188,7 +188,9 @@ func (sm *SessionManager) AppendMessageWithContext(ctx context.Context, sessionK
 	defer span.End()
 	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", sessionKey).Logger()
 	start := time.Now()
-	defer observability.RecordSessionSave(time.Since(start))
+	defer func() {
+		observability.RecordSessionSave(time.Since(start))
+	}()
 
 	if err := sm.validateSessionKey(sessionKey); err != nil {
 		span.RecordError(err)
@@ -288,7 +290,9 @@ func (sm *SessionManager) LoadSessionWithContext(ctx context.Context, sessionKey
 	defer span.End()
 	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", sessionKey).Logger()
 	start := time.Now()
-	defer observability.RecordSessionLoad(time.Since(start))
+	defer func() {
+		observability.RecordSessionLoad(time.Since(start))
+	}()
 
 	if err := sm.validateSessionKey(sessionKey); err != nil {
 		span.RecordError(err)

@@ -252,8 +252,12 @@ func parseTime(timeStr string) (int, error) {
 	}
 
 	var hours, minutes int
-	fmt.Sscanf(parts[0], "%d", &hours)
-	fmt.Sscanf(parts[1], "%d", &minutes)
+	if _, err := fmt.Sscanf(parts[0], "%d", &hours); err != nil {
+		return 0, fmt.Errorf("invalid hours format: %w", err)
+	}
+	if _, err := fmt.Sscanf(parts[1], "%d", &minutes); err != nil {
+		return 0, fmt.Errorf("invalid minutes format: %w", err)
+	}
 
 	if hours < 0 || hours > 23 || minutes < 0 || minutes > 59 {
 		return 0, fmt.Errorf("invalid time values")

@@ -302,7 +302,7 @@ func hasExcessiveQuantifiers(pattern string) bool {
 // parseInt safely parses an integer
 func parseInt(s string) int {
 	var n int
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }
 

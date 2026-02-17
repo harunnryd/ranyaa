@@ -187,7 +187,7 @@ func TestConfigLoader_LoadFromFile_Errors(t *testing.T) {
 			setupFunc: func() string {
 				tmpDir := t.TempDir()
 				configPath := filepath.Join(tmpDir, "invalid.json")
-				os.WriteFile(configPath, []byte("{invalid json}"), 0644)
+				_ = os.WriteFile(configPath, []byte("{invalid json}"), 0644)
 				return configPath
 			},
 			wantErr: "failed to parse JSON config",
@@ -197,7 +197,7 @@ func TestConfigLoader_LoadFromFile_Errors(t *testing.T) {
 			setupFunc: func() string {
 				tmpDir := t.TempDir()
 				configPath := filepath.Join(tmpDir, "invalid.yaml")
-				os.WriteFile(configPath, []byte("invalid: yaml: content: ["), 0644)
+				_ = os.WriteFile(configPath, []byte("invalid: yaml: content: ["), 0644)
 				return configPath
 			},
 			wantErr: "failed to parse YAML config",
@@ -207,7 +207,7 @@ func TestConfigLoader_LoadFromFile_Errors(t *testing.T) {
 			setupFunc: func() string {
 				tmpDir := t.TempDir()
 				configPath := filepath.Join(tmpDir, "config.txt")
-				os.WriteFile(configPath, []byte("some content"), 0644)
+				_ = os.WriteFile(configPath, []byte("some content"), 0644)
 				return configPath
 			},
 			wantErr: "unsupported config file format",

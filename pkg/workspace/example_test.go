@@ -17,8 +17,8 @@ func Example_basic() {
 	defer os.RemoveAll(tmpDir)
 
 	// Create some workspace files
-	os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte("# Agent Instructions\nYou are an AI assistant."), 0644)
-	os.WriteFile(filepath.Join(tmpDir, "SOUL.md"), []byte("# Agent Soul\nBe helpful and friendly."), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte("# Agent Instructions\nYou are an AI assistant."), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "SOUL.md"), []byte("# Agent Soul\nBe helpful and friendly."), 0644)
 
 	// Create workspace manager
 	config := workspace.WorkspaceConfig{
@@ -85,13 +85,13 @@ func Example_events() {
 	})
 
 	// Initialize
-	manager.Init()
+	_ = manager.Init()
 
 	// Wait for events
 	time.Sleep(100 * time.Millisecond)
 
 	// Add a file
-	os.WriteFile(filepath.Join(tmpDir, "TOOLS.md"), []byte("# Tools"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "TOOLS.md"), []byte("# Tools"), 0644)
 
 	// Wait for file added event
 	time.Sleep(200 * time.Millisecond)
@@ -186,7 +186,7 @@ func Example_criticalFileReload() {
 	}
 
 	// Initialize
-	manager.Init()
+	_ = manager.Init()
 
 	// Wait for initialization
 	time.Sleep(100 * time.Millisecond)

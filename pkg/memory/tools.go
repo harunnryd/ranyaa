@@ -79,7 +79,9 @@ type MemoryWriteResult struct {
 // MemoryWrite creates or updates a memory file
 func MemoryWrite(ctx context.Context, manager *Manager, workspacePath string, params MemoryWriteParams) (*MemoryWriteResult, error) {
 	start := time.Now()
-	defer observability.RecordMemoryWrite(time.Since(start))
+	defer func() {
+		observability.RecordMemoryWrite(time.Since(start))
+	}()
 
 	if params.Path == "" {
 		return nil, fmt.Errorf("path is required")

@@ -17,9 +17,9 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 	soulFile := filepath.Join(tmpDir, "SOUL.md")
 	configFile := filepath.Join(tmpDir, "config.yaml")
 
-	os.WriteFile(agentsFile, []byte("# Agent Instructions\nYou are an AI assistant."), 0644)
-	os.WriteFile(soulFile, []byte("# Agent Soul\nBe helpful and friendly."), 0644)
-	os.WriteFile(configFile, []byte("name: test\nversion: 1.0"), 0644)
+	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions\nYou are an AI assistant."), 0644)
+	_ = os.WriteFile(soulFile, []byte("# Agent Soul\nBe helpful and friendly."), 0644)
+	_ = os.WriteFile(configFile, []byte("name: test\nversion: 1.0"), 0644)
 
 	// Create workspace manager
 	config := WorkspaceConfig{
@@ -89,7 +89,7 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 
 	// Test file addition
 	newFile := filepath.Join(tmpDir, "TOOLS.md")
-	os.WriteFile(newFile, []byte("# Tools\nAvailable tools..."), 0644)
+	_ = os.WriteFile(newFile, []byte("# Tools\nAvailable tools..."), 0644)
 
 	// Wait for file added event
 	time.Sleep(200 * time.Millisecond)
@@ -105,7 +105,7 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 	}
 
 	// Test file change
-	os.WriteFile(agentsFile, []byte("# Agent Instructions\nUpdated content."), 0644)
+	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions\nUpdated content."), 0644)
 
 	// Wait for file changed event
 	time.Sleep(200 * time.Millisecond)
@@ -158,7 +158,7 @@ func TestIntegration_ConfigResolution(t *testing.T) {
 
 	// Create content file
 	contentFile := filepath.Join(tmpDir, "content.txt")
-	os.WriteFile(contentFile, []byte("This is file content"), 0644)
+	_ = os.WriteFile(contentFile, []byte("This is file content"), 0644)
 
 	// Create config file with env vars and file refs
 	configFile := filepath.Join(tmpDir, "config.yaml")

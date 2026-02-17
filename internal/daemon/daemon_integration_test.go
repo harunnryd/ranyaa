@@ -680,7 +680,7 @@ func TestIntegrationCronSchedulingAndPersistence(t *testing.T) {
 		OnEvent:             func(_ cron.Event) {},
 	})
 	require.NoError(t, err)
-	defer svc.Stop()
+	defer func() { _ = svc.Stop() }()
 
 	job, err := svc.AddJob(cron.AddParams{
 		Name:    "schedule-test",
@@ -713,7 +713,7 @@ func TestIntegrationCronSchedulingAndPersistence(t *testing.T) {
 		OnEvent:             func(_ cron.Event) {},
 	})
 	require.NoError(t, err)
-	defer svc2.Stop()
+	defer func() { _ = svc2.Stop() }()
 
 	loaded := svc2.GetJob(job.ID)
 	require.NotNil(t, loaded)

@@ -96,7 +96,7 @@ func TestDaemonStatus(t *testing.T) {
 	// Start daemon
 	err := daemon.Start()
 	require.NoError(t, err)
-	defer daemon.Stop()
+	defer func() { _ = daemon.Stop() }()
 
 	// Status after start
 	time.Sleep(100 * time.Millisecond)

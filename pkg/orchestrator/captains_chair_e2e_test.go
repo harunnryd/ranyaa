@@ -139,7 +139,7 @@ func TestCaptainsChair_E2E_CompleteWorkflow(t *testing.T) {
 	chair := NewCaptainsChair(orchestrator, spawner, logger)
 
 	// Register realistic agent configurations
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:                     "production-captain",
 		Name:                   "Production Captain",
 		Role:                   RoleCaptain,
@@ -153,7 +153,7 @@ func TestCaptainsChair_E2E_CompleteWorkflow(t *testing.T) {
 		},
 	})
 
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:           "production-executor",
 		Name:         "Production Executor",
 		Role:         RoleExecutor,
@@ -170,7 +170,7 @@ func TestCaptainsChair_E2E_CompleteWorkflow(t *testing.T) {
 		},
 	})
 
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:           "production-critic",
 		Name:         "Production Critic",
 		Role:         RoleCritic,

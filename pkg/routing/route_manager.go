@@ -539,11 +539,7 @@ func isValidTimeFormat(timeStr string) bool {
 		}
 		minute = minute*10 + int(c-'0')
 	}
-	if minute > 59 {
-		return false
-	}
-
-	return true
+	return minute <= 59
 }
 
 // validateRegexComplexity checks for potentially dangerous regex patterns
@@ -566,8 +562,8 @@ func validateRegexComplexity(pattern string) error {
 	for _, match := range matches {
 		if len(match) >= 3 {
 			var min, max int
-			fmt.Sscanf(match[1], "%d", &min)
-			fmt.Sscanf(match[2], "%d", &max)
+			_, _ = fmt.Sscanf(match[1], "%d", &min)
+			_, _ = fmt.Sscanf(match[2], "%d", &max)
 			if max-min > 1000 {
 				return fmt.Errorf("regex contains excessive repetition range {%d,%d}", min, max)
 			}

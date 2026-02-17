@@ -50,7 +50,7 @@ func (m *Media) HandleMedia(update tgbotapi.Update) error {
 	var fileID string
 	var mediaType string
 
-	if msg.Photo != nil && len(msg.Photo) > 0 {
+	if len(msg.Photo) > 0 {
 		fileID = msg.Photo[len(msg.Photo)-1].FileID
 		mediaType = "photo"
 	} else if msg.Video != nil {

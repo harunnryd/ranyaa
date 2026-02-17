@@ -159,7 +159,7 @@ func TestUnregisterWebhook(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	_ = server.RegisterWebhook(config)
 
 	// Unregister webhook
 	removed := server.UnregisterWebhook("/webhook/test", http.MethodPost)
@@ -200,7 +200,7 @@ func TestListWebhooks(t *testing.T) {
 	}
 
 	for _, config := range configs {
-		server.RegisterWebhook(config)
+		_ = server.RegisterWebhook(config)
 	}
 
 	// List webhooks
@@ -220,7 +220,7 @@ func TestListWebhooksRedactsSecrets(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	_ = server.RegisterWebhook(config)
 
 	// List webhooks
 	webhooks := server.ListWebhooks()
@@ -274,7 +274,7 @@ func TestHandleWebhookSuccess(t *testing.T) {
 			}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	_ = server.RegisterWebhook(config)
 
 	// Make request
 	body := map[string]string{"test": "data"}
@@ -321,7 +321,7 @@ func TestHandleWebhookSignatureVerification(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	_ = server.RegisterWebhook(config)
 
 	// Make request with valid signature
 	body := `{"test":"data"}`
@@ -354,7 +354,7 @@ func TestHandleWebhookInvalidSignature(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	_ = server.RegisterWebhook(config)
 
 	// Make request with invalid signature
 	body := `{"test":"data"}`

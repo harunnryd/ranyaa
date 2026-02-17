@@ -24,7 +24,7 @@ func TestHostSandbox_Integration_FullWorkflow(t *testing.T) {
 	// Start sandbox
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	// Execute multiple commands
 	commands := []struct {
@@ -93,7 +93,7 @@ func TestHostSandbox_Integration_FilesystemAccess(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	// Test allowed path
 	req := ExecuteRequest{
@@ -129,7 +129,7 @@ func TestHostSandbox_Integration_ResourceLimits(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	// Test timeout
 	req := ExecuteRequest{
@@ -162,7 +162,7 @@ func TestHostSandbox_Integration_ComplexCommand(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	// Read the file using cat
 	req := ExecuteRequest{

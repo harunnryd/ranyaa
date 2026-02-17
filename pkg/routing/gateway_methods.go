@@ -206,10 +206,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 			// Get statistics
 			stats := service.GetStatistics(routeID)
 
-			if stats == nil && routeID != "" {
-				return nil, fmt.Errorf("route %s not found", routeID)
-			}
-
+			// Note: GetStatistics never returns nil, so no need to check
 			return stats, nil
 		}, nil)
 

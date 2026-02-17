@@ -39,7 +39,7 @@ func TestSandboxE2E_RealToolExecution(t *testing.T) {
 	cfg := sandbox.DefaultConfig()
 	cfg.ResourceLimits.Timeout = 10 * time.Second
 	sm := NewSandboxManager(cfg)
-	defer sm.StopAll(context.Background())
+	defer func() { _ = sm.StopAll(context.Background()) }()
 
 	// Create execution context with sandbox enabled
 	execCtx := &ExecutionContext{
@@ -76,7 +76,7 @@ func TestSandboxE2E_FilesystemRestrictions(t *testing.T) {
 	cfg.FilesystemAccess.DeniedPaths = []string{"/etc", "/usr"}
 
 	sm := NewSandboxManager(cfg)
-	defer sm.StopAll(context.Background())
+	defer func() { _ = sm.StopAll(context.Background()) }()
 
 	ctx := context.Background()
 

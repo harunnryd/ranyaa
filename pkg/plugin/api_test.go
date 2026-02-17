@@ -216,8 +216,8 @@ func TestToolRegistry(t *testing.T) {
 		def1 := ToolDefinition{Name: "tool4", Description: "Tool 4", Parameters: map[string]any{}}
 		def2 := ToolDefinition{Name: "tool5", Description: "Tool 5", Parameters: map[string]any{}}
 
-		registry.Register("plugin2", def1)
-		registry.Register("plugin2", def2)
+		_ = registry.Register("plugin2", def1)
+		_ = registry.Register("plugin2", def2)
 
 		removed := registry.UnregisterByPlugin("plugin2")
 		assert.Len(t, removed, 2)
@@ -244,8 +244,8 @@ func TestHookRegistry(t *testing.T) {
 	t.Run("allows multiple hooks for same event", func(t *testing.T) {
 		def := HookDefinition{Event: "event2"}
 
-		registry.Register("plugin1", def)
-		registry.Register("plugin2", def)
+		_ = registry.Register("plugin1", def)
+		_ = registry.Register("plugin2", def)
 
 		hooks := registry.GetHooks("event2")
 		assert.Len(t, hooks, 2)
@@ -254,8 +254,8 @@ func TestHookRegistry(t *testing.T) {
 	t.Run("unregisters by plugin", func(t *testing.T) {
 		def := HookDefinition{Event: "event3"}
 
-		registry.Register("plugin3", def)
-		registry.Register("plugin3", def)
+		_ = registry.Register("plugin3", def)
+		_ = registry.Register("plugin3", def)
 
 		removed := registry.UnregisterByPlugin("plugin3")
 		assert.Len(t, removed, 2)

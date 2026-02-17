@@ -15,7 +15,7 @@ func TestPolicyIntegration_CheckBeforeExecution(t *testing.T) {
 
 	// Register tool
 	registry.Register("test_tool", "Test tool", CategoryGeneral)
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "test_tool",
 		Description: "Test tool",
 		Parameters:  []ToolParameter{},
@@ -63,7 +63,7 @@ func TestPolicyIntegration_CheckBeforeExecution(t *testing.T) {
 func TestPolicyIntegration_BlockExecution(t *testing.T) {
 	executor := New()
 
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "blocked_tool",
 		Description: "Tool that should be blocked",
 		Parameters:  []ToolParameter{},

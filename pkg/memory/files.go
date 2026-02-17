@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // EnsureMemoryDirectory creates the memory directory if it doesn't exist
@@ -48,7 +49,7 @@ func ValidateMemoryPath(path string) error {
 	}
 
 	// Check for parent directory references
-	if filepath.HasPrefix(cleanPath, "..") {
+	if strings.HasPrefix(cleanPath, "..") {
 		return fmt.Errorf("path cannot reference parent directories: %s", path)
 	}
 
@@ -74,7 +75,8 @@ func GetMemoryFilePath(basePath, relativePath string) (string, error) {
 		return "", fmt.Errorf("failed to get absolute full path: %w", err)
 	}
 
-	if !filepath.HasPrefix(absFull, absBase) {
+	// Ensure full path is within base directory
+	if !strings.HasPrefix(absFull+string(filepath.Separator), absBase+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes base directory: %s", relativePath)
 	}
 

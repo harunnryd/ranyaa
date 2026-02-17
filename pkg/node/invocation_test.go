@@ -53,7 +53,7 @@ func TestInvocationManager_Invoke_Success(t *testing.T) {
 		Success:      true,
 		Result:       map[string]interface{}{"imageUrl": "http://example.com/image.jpg"},
 	}
-	err = im.HandleResponse(nodeResponse)
+	_ = im.HandleResponse(nodeResponse)
 	require.NoError(t, err)
 
 	// Wait for response
@@ -283,7 +283,7 @@ func TestInvocationManager_Statistics(t *testing.T) {
 			Success:      true,
 			Result:       map[string]interface{}{},
 		}
-		im.HandleResponse(nodeResponse)
+		_ = im.HandleResponse(nodeResponse)
 	}()
 
 	response, err := im.Invoke(context.Background(), req)

@@ -37,7 +37,7 @@ func TestToolExecutor_WithSandbox(t *testing.T) {
 	cfg := sandbox.DefaultConfig()
 	cfg.ResourceLimits.Timeout = 10 * time.Second
 	sm := NewSandboxManager(cfg)
-	defer sm.StopAll(context.Background())
+	defer func() { _ = sm.StopAll(context.Background()) }()
 
 	// Set sandbox manager on executor
 	te.SetSandboxManager(sm)

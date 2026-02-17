@@ -64,7 +64,7 @@ func TestHostSandbox_Execute_SimpleCommand(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	req := ExecuteRequest{
 		Command: "echo",
@@ -105,7 +105,7 @@ func TestHostSandbox_Execute_Timeout(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	req := ExecuteRequest{
 		Command: "sleep",
@@ -127,7 +127,7 @@ func TestHostSandbox_Execute_NonZeroExit(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	req := ExecuteRequest{
 		Command: "sh",
@@ -149,7 +149,7 @@ func TestHostSandbox_Execute_WithStdin(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	req := ExecuteRequest{
 		Command: "cat",
@@ -173,7 +173,7 @@ func TestHostSandbox_Execute_WithEnv(t *testing.T) {
 	ctx := context.Background()
 	err = sandbox.Start(ctx)
 	require.NoError(t, err)
-	defer sandbox.Stop(ctx)
+	defer func() { _ = sandbox.Stop(ctx) }()
 
 	req := ExecuteRequest{
 		Command: "sh",

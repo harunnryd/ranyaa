@@ -49,7 +49,7 @@ func TestCreateGitHubHandler(t *testing.T) {
 	}
 	prBody, _ := json.Marshal(prPayload)
 	var prBodyInterface interface{}
-	json.Unmarshal(prBody, &prBodyInterface)
+	_ = json.Unmarshal(prBody, &prBodyInterface)
 
 	response, err := handler.Handler(WebhookParams{
 		Body: prBodyInterface,
@@ -71,7 +71,7 @@ func TestCreateGitHubHandler(t *testing.T) {
 	}
 	issueBody, _ := json.Marshal(issuePayload)
 	var issueBodyInterface interface{}
-	json.Unmarshal(issueBody, &issueBodyInterface)
+	_ = json.Unmarshal(issueBody, &issueBodyInterface)
 
 	response, err = handler.Handler(WebhookParams{
 		Body: issueBodyInterface,
@@ -89,7 +89,7 @@ func TestCreateGitHubHandler(t *testing.T) {
 	}
 	pushBody, _ := json.Marshal(pushPayload)
 	var pushBodyInterface interface{}
-	json.Unmarshal(pushBody, &pushBodyInterface)
+	_ = json.Unmarshal(pushBody, &pushBodyInterface)
 
 	response, err = handler.Handler(WebhookParams{
 		Body: pushBodyInterface,
@@ -149,7 +149,7 @@ func TestCreateGmailHandler(t *testing.T) {
 	}
 	pubsubBody, _ := json.Marshal(pubsubMsg)
 	var pubsubBodyInterface interface{}
-	json.Unmarshal(pubsubBody, &pubsubBodyInterface)
+	_ = json.Unmarshal(pubsubBody, &pubsubBodyInterface)
 
 	response, err := handler.Handler(WebhookParams{
 		Body: pubsubBodyInterface,
@@ -191,7 +191,7 @@ func TestCreateTelegramHandler(t *testing.T) {
 	}
 	messageBody, _ := json.Marshal(messageUpdate)
 	var messageBodyInterface interface{}
-	json.Unmarshal(messageBody, &messageBodyInterface)
+	_ = json.Unmarshal(messageBody, &messageBodyInterface)
 
 	response, err := handler.Handler(WebhookParams{
 		Body: messageBodyInterface,
@@ -214,7 +214,7 @@ func TestCreateTelegramHandler(t *testing.T) {
 	}
 	callbackBody, _ := json.Marshal(callbackUpdate)
 	var callbackBodyInterface interface{}
-	json.Unmarshal(callbackBody, &callbackBodyInterface)
+	_ = json.Unmarshal(callbackBody, &callbackBodyInterface)
 
 	response, err = handler.Handler(WebhookParams{
 		Body: callbackBodyInterface,

@@ -12,15 +12,15 @@ import (
 
 // registerBuiltinMethods registers all built-in RPC methods
 func (s *Server) registerBuiltinMethods() {
-	s.router.RegisterMethod("agent.wait", s.handleAgentWait)
-	s.router.RegisterMethod("agent.abort", s.handleAgentAbort)
-	s.router.RegisterMethod("sessions.send", s.handleSessionsSend)
-	s.router.RegisterMethod("sessions.list", s.handleSessionsList)
-	s.router.RegisterMethod("sessions.get", s.handleSessionsGet)
-	s.router.RegisterMethod("sessions.delete", s.handleSessionsDelete)
+	_ = s.router.RegisterMethod("agent.wait", s.handleAgentWait)
+	_ = s.router.RegisterMethod("agent.abort", s.handleAgentAbort)
+	_ = s.router.RegisterMethod("sessions.send", s.handleSessionsSend)
+	_ = s.router.RegisterMethod("sessions.list", s.handleSessionsList)
+	_ = s.router.RegisterMethod("sessions.get", s.handleSessionsGet)
+	_ = s.router.RegisterMethod("sessions.delete", s.handleSessionsDelete)
 
 	if s.memoryManager != nil {
-		s.router.RegisterMethod("memory.search", s.handleMemorySearch)
+		_ = s.router.RegisterMethod("memory.search", s.handleMemorySearch)
 	}
 }
 

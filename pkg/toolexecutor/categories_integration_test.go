@@ -20,7 +20,7 @@ func TestToolRegistry_Integration_WithExecutor(t *testing.T) {
 	require.NoError(t, registry.Register("exec_shell", "Execute shell command", CategoryShell))
 
 	// Register tools in executor
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "read_file",
 		Description: "Read a file",
 		Parameters:  []ToolParameter{},
@@ -29,7 +29,7 @@ func TestToolRegistry_Integration_WithExecutor(t *testing.T) {
 		},
 	})
 
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "write_file",
 		Description: "Write a file",
 		Parameters:  []ToolParameter{},
@@ -38,7 +38,7 @@ func TestToolRegistry_Integration_WithExecutor(t *testing.T) {
 		},
 	})
 
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "exec_shell",
 		Description: "Execute shell command",
 		Parameters:  []ToolParameter{},
@@ -63,10 +63,10 @@ func TestCategoryPolicy_Integration_WithExecutor(t *testing.T) {
 	registry := NewToolRegistry()
 
 	// Register tools
-	registry.Register("read_file", "Read file", CategoryRead)
-	registry.Register("write_file", "Write file", CategoryWrite)
+	_ = registry.Register("read_file", "Read file", CategoryRead)
+	_ = registry.Register("write_file", "Write file", CategoryWrite)
 
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "read_file",
 		Description: "Read file",
 		Parameters:  []ToolParameter{},
@@ -75,7 +75,7 @@ func TestCategoryPolicy_Integration_WithExecutor(t *testing.T) {
 		},
 	})
 
-	executor.RegisterTool(ToolDefinition{
+	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "write_file",
 		Description: "Write file",
 		Parameters:  []ToolParameter{},
@@ -109,9 +109,9 @@ func TestCategoryPolicy_Integration_WithExecutor(t *testing.T) {
 // Integration test: Category matcher with policy evaluator
 func TestCategoryMatcher_Integration_WithPolicyEvaluator(t *testing.T) {
 	registry := NewToolRegistry()
-	registry.Register("read_file", "Read file", CategoryRead)
-	registry.Register("write_file", "Write file", CategoryWrite)
-	registry.Register("exec_command", "Execute command", CategoryShell)
+	_ = registry.Register("read_file", "Read file", CategoryRead)
+	_ = registry.Register("write_file", "Write file", CategoryWrite)
+	_ = registry.Register("exec_command", "Execute command", CategoryShell)
 
 	matcher := NewCategoryMatcher(registry)
 	policyEngine := NewPolicyEngine()
@@ -143,9 +143,9 @@ func TestCategoryMatcher_Integration_WithPolicyEvaluator(t *testing.T) {
 // Integration test: Filter tools by category and apply policy
 func TestFilterAndPolicy_Integration(t *testing.T) {
 	registry := NewToolRegistry()
-	registry.Register("read_file", "Read file", CategoryRead)
-	registry.Register("read_dir", "Read directory", CategoryRead)
-	registry.Register("write_file", "Write file", CategoryWrite)
+	_ = registry.Register("read_file", "Read file", CategoryRead)
+	_ = registry.Register("read_dir", "Read directory", CategoryRead)
+	_ = registry.Register("write_file", "Write file", CategoryWrite)
 	registry.Register("delete_file", "Delete file", CategoryWrite)
 	registry.Register("exec_command", "Execute command", CategoryShell)
 

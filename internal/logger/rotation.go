@@ -98,7 +98,9 @@ func (w *RotatingWriter) rotate() error {
 
 	// Compress if enabled
 	if w.compress {
-		go w.compressFile(rotatedName)
+		go func() {
+			_ = w.compressFile(rotatedName)
+		}()
 	}
 
 	// Open new file

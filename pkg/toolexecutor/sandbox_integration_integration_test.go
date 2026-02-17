@@ -47,7 +47,7 @@ func TestSandboxIntegration_MultipleSandboxes(t *testing.T) {
 	sm := NewSandboxManager(cfg)
 
 	ctx := context.Background()
-	defer sm.StopAll(ctx)
+	defer func() { _ = sm.StopAll(ctx) }()
 
 	// Create agent-scoped sandbox
 	sb1, err := sm.GetOrCreateSandbox(ctx, "agent-1")
@@ -86,7 +86,7 @@ func TestSandboxIntegration_SandboxReuse(t *testing.T) {
 	sm := NewSandboxManager(cfg)
 
 	ctx := context.Background()
-	defer sm.StopAll(ctx)
+	defer func() { _ = sm.StopAll(ctx) }()
 
 	// Get sandbox first time
 	sb1, err := sm.GetOrCreateSandbox(ctx, "agent-1")
@@ -122,7 +122,7 @@ func TestSandboxIntegration_ErrorHandling(t *testing.T) {
 		sm := NewSandboxManager(cfg)
 
 		ctx := context.Background()
-		defer sm.StopAll(ctx)
+		defer func() { _ = sm.StopAll(ctx) }()
 
 		req := sandbox.ExecuteRequest{
 			Command: "nonexistent-command-xyz-12345",

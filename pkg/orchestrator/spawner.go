@@ -131,7 +131,7 @@ func (s *Spawner) Spawn(ctx context.Context, req SpawnRequest) (AgentResult, err
 	// Handle execution result
 	if err != nil {
 		// Update instance status to failed
-		s.orchestrator.UpdateInstanceStatus(instance.ID, AgentStatusFailed)
+		_ = s.orchestrator.UpdateInstanceStatus(instance.ID, AgentStatusFailed)
 
 		if s.logger != nil {
 			s.logger.Error("Sub-agent execution failed",
@@ -147,7 +147,7 @@ func (s *Spawner) Spawn(ctx context.Context, req SpawnRequest) (AgentResult, err
 	}
 
 	// Update instance status to stopped (completed)
-	s.orchestrator.UpdateInstanceStatus(instance.ID, AgentStatusStopped)
+	_ = s.orchestrator.UpdateInstanceStatus(instance.ID, AgentStatusStopped)
 
 	if s.logger != nil {
 		s.logger.Info("Sub-agent execution completed",

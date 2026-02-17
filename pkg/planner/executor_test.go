@@ -313,7 +313,7 @@ func TestGetStepResult(t *testing.T) {
 		return nil
 	}
 
-	e.Execute(context.Background(), plan, executor)
+	_ = e.Execute(context.Background(), plan, executor)
 
 	t.Run("get step result", func(t *testing.T) {
 		result, err := e.GetStepResult(plan, "step-1")

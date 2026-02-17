@@ -168,7 +168,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // handleWebhook handles webhook requests
@@ -417,7 +417,7 @@ func (s *Server) sendResponse(w http.ResponseWriter, response WebhookResponse) {
 
 	// Write body
 	if response.Body != nil {
-		json.NewEncoder(w).Encode(response.Body)
+		_ = json.NewEncoder(w).Encode(response.Body)
 	}
 }
 

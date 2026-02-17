@@ -116,7 +116,7 @@ func TestLifecycleManagerGetPID(t *testing.T) {
 	// Start to create PID file
 	err = lm.Start()
 	require.NoError(t, err)
-	defer lm.Stop()
+	defer func() { _ = lm.Stop() }()
 
 	// Get PID
 	pid, err := lm.GetPID()

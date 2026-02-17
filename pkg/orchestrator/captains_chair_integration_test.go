@@ -63,7 +63,7 @@ func TestCaptainsChair_Integration_FullFlow(t *testing.T) {
 	chair := NewCaptainsChair(orchestrator, spawner, logger)
 
 	// Register agents
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:          "captain-1",
 		Name:        "Captain Agent",
 		Role:        RoleCaptain,
@@ -72,7 +72,7 @@ func TestCaptainsChair_Integration_FullFlow(t *testing.T) {
 		MaxTokens:   4096,
 	})
 
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:          "executor-1",
 		Name:        "Executor Agent",
 		Role:        RoleExecutor,
@@ -81,7 +81,7 @@ func TestCaptainsChair_Integration_FullFlow(t *testing.T) {
 		MaxTokens:   4096,
 	})
 
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:          "critic-1",
 		Name:        "Critic Agent",
 		Role:        RoleCritic,
@@ -144,7 +144,7 @@ func TestCaptainsChair_Integration_ExecutorFailure(t *testing.T) {
 	chair := NewCaptainsChair(orchestrator, spawner, logger)
 
 	// Register agents
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:          "captain-2",
 		Name:        "Captain Agent",
 		Role:        RoleCaptain,
@@ -153,7 +153,7 @@ func TestCaptainsChair_Integration_ExecutorFailure(t *testing.T) {
 		MaxTokens:   4096,
 	})
 
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:          "executor-2",
 		Name:        "Executor Agent",
 		Role:        RoleExecutor,
@@ -162,7 +162,7 @@ func TestCaptainsChair_Integration_ExecutorFailure(t *testing.T) {
 		MaxTokens:   4096,
 	})
 
-	orchestrator.RegisterAgent(AgentConfig{
+	_ = orchestrator.RegisterAgent(AgentConfig{
 		ID:          "critic-2",
 		Name:        "Critic Agent",
 		Role:        RoleCritic,

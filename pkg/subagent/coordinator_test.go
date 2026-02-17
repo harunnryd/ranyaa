@@ -102,7 +102,7 @@ func TestInitialize(t *testing.T) {
 		}
 
 		data, _ := json.Marshal(registry)
-		os.WriteFile(registryPath, data, 0600)
+		_ = os.WriteFile(registryPath, data, 0600)
 
 		// Initialize coordinator
 		logger := zerolog.New(os.Stdout).Level(zerolog.ErrorLevel)
@@ -123,7 +123,7 @@ func TestInitialize(t *testing.T) {
 		defer os.RemoveAll(tmpDir)
 
 		registryPath := filepath.Join(tmpDir, "corrupted.json")
-		os.WriteFile(registryPath, []byte("invalid json{{{"), 0600)
+		_ = os.WriteFile(registryPath, []byte("invalid json{{{"), 0600)
 
 		logger := zerolog.New(os.Stdout).Level(zerolog.ErrorLevel)
 		coordinator, _ := NewCoordinator(Config{
@@ -221,7 +221,7 @@ func TestRegisterRun(t *testing.T) {
 		// Load and verify
 		data, _ := os.ReadFile(registryPath)
 		var registry Registry
-		json.Unmarshal(data, &registry)
+		_ = json.Unmarshal(data, &registry)
 
 		assert.Len(t, registry.Runs, 1)
 		assert.Equal(t, runID, registry.Runs[0].ID)
@@ -326,7 +326,7 @@ func TestUpdateRunStatus(t *testing.T) {
 			eventReceived = true
 		})
 
-		coordinator.UpdateRunStatus(runID, StatusRunning, nil)
+		_ = coordinator.UpdateRunStatus(runID, StatusRunning, nil)
 		assert.True(t, eventReceived)
 	})
 }
@@ -452,7 +452,7 @@ func TestHandleLifecycleEvent(t *testing.T) {
 			eventReceived = true
 		})
 
-		coordinator.HandleLifecycleEvent(LifecycleEvent{
+		_ = coordinator.HandleLifecycleEvent(LifecycleEvent{
 			Type:       EventStart,
 			SessionKey: "child",
 			Timestamp:  time.Now().UnixMilli(),
@@ -518,17 +518,17 @@ func TestListChildren(t *testing.T) {
 		defer cleanup()
 
 		// Register parent and children
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "parent",
 			ChildSessionKey:  "child-1",
 			Prompt:           "test",
 		})
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "parent",
 			ChildSessionKey:  "child-2",
 			Prompt:           "test",
 		})
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "other-parent",
 			ChildSessionKey:  "child-3",
 			Prompt:           "test",
@@ -554,17 +554,17 @@ func TestListDescendants(t *testing.T) {
 
 		// Build hierarchy: root -> child1 -> grandchild1
 		//                       -> child2
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "root",
 			ChildSessionKey:  "child1",
 			Prompt:           "test",
 		})
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "root",
 			ChildSessionKey:  "child2",
 			Prompt:           "test",
 		})
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "child1",
 			ChildSessionKey:  "grandchild1",
 			Prompt:           "test",
@@ -578,7 +578,7 @@ func TestListDescendants(t *testing.T) {
 		coordinator, _, cleanup := setupTestCoordinator(t)
 		defer cleanup()
 
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "parent",
 			ChildSessionKey:  "leaf",
 			Prompt:           "test",
@@ -612,9 +612,9 @@ func TestCountActiveRuns(t *testing.T) {
 		})
 
 		// Update statuses
-		coordinator.UpdateRunStatus(runID1, StatusRunning, nil)
-		coordinator.UpdateRunStatus(runID2, StatusCompleted, nil)
-		coordinator.UpdateRunStatus(runID3, StatusPending, nil)
+		_ = coordinator.UpdateRunStatus(runID1, StatusRunning, nil)
+		_ = coordinator.UpdateRunStatus(runID2, StatusCompleted, nil)
+		_ = coordinator.UpdateRunStatus(runID3, StatusPending, nil)
 
 		count := coordinator.CountActiveRuns("parent")
 		assert.Equal(t, 2, count) // pending + running
@@ -626,12 +626,12 @@ func TestCountDescendants(t *testing.T) {
 		coordinator, _, cleanup := setupTestCoordinator(t)
 		defer cleanup()
 
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "root",
 			ChildSessionKey:  "child1",
 			Prompt:           "test",
 		})
-		coordinator.RegisterRun(RunParams{
+		_, _ = coordinator.RegisterRun(RunParams{
 			ParentSessionKey: "child1",
 			ChildSessionKey:  "grandchild1",
 			Prompt:           "test",
@@ -655,7 +655,7 @@ func TestCleanup(t *testing.T) {
 		})
 
 		oldTime := time.Now().UnixMilli() - (8 * 24 * 60 * 60 * 1000) // 8 days ago
-		coordinator.UpdateRunStatus(runID, StatusCompleted, nil)
+		_ = coordinator.UpdateRunStatus(runID, StatusCompleted, nil)
 
 		// Manually set old completion time
 		run := coordinator.GetRun(runID)
@@ -696,7 +696,7 @@ func TestCleanup(t *testing.T) {
 			Prompt:           "test",
 		})
 
-		coordinator.UpdateRunStatus(runID, StatusCompleted, nil)
+		_ = coordinator.UpdateRunStatus(runID, StatusCompleted, nil)
 
 		removed, err := coordinator.Cleanup(7 * 24 * 60 * 60 * 1000)
 
@@ -733,9 +733,9 @@ func TestGetStats(t *testing.T) {
 			Prompt:           "test",
 		})
 
-		coordinator.UpdateRunStatus(runID1, StatusRunning, nil)
-		coordinator.UpdateRunStatus(runID2, StatusCompleted, nil)
-		coordinator.UpdateRunStatus(runID3, StatusFailed, nil)
+		_ = coordinator.UpdateRunStatus(runID1, StatusRunning, nil)
+		_ = coordinator.UpdateRunStatus(runID2, StatusCompleted, nil)
+		_ = coordinator.UpdateRunStatus(runID3, StatusFailed, nil)
 		coordinator.UpdateRunStatus(runID4, StatusAborted, nil)
 
 		stats := coordinator.GetStats()
@@ -792,7 +792,7 @@ func TestPersistence(t *testing.T) {
 			AutoSave:     true,
 			Logger:       logger,
 		})
-		coordinator1.Initialize()
+		_ = coordinator1.Initialize()
 
 		runID, _ := coordinator1.RegisterRun(RunParams{
 			ParentSessionKey: "parent",
@@ -807,7 +807,7 @@ func TestPersistence(t *testing.T) {
 			RegistryPath: registryPath,
 			Logger:       logger,
 		})
-		coordinator2.Initialize()
+		_ = coordinator2.Initialize()
 
 		run := coordinator2.GetRun(runID)
 		assert.NotNil(t, run)

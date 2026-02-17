@@ -132,7 +132,7 @@ func NewManager(cfg Config) (*Manager, error) {
 
 	// Watch workspace directory
 	if err := watcher.Watch(cfg.WorkspacePath); err != nil {
-		watcher.Stop()
+		_ = watcher.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to watch workspace: %w", err)
 	}
@@ -232,7 +232,9 @@ func (m *Manager) SearchWithContext(ctx context.Context, query string, opts *Sea
 
 	logger := tracing.LoggerFromContext(ctx, m.logger)
 	start := time.Now()
-	defer observability.RecordMemorySearch(time.Since(start))
+	defer func() {
+		observability.RecordMemorySearch(time.Since(start))
+	}()
 
 	if query == "" {
 		return []SearchResult{}, nil
@@ -548,7 +550,9 @@ func (m *Manager) Sync() error {
 
 	logger.Info().Msg("Starting sync")
 	start := time.Now()
-	defer observability.RecordMemoryWrite(time.Since(start))
+	defer func() {
+		observability.RecordMemoryWrite(time.Since(start))
+	}()
 
 	// Find all markdown files
 	var mdFiles []string
@@ -637,7 +641,7 @@ func (m *Manager) indexFile(fullPath, relPath string) (bool, int, error) {
 	if err != nil {
 		return false, 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Delete existing file entry (cascades to chunks)
 	if _, err := tx.Exec("DELETE FROM files WHERE path = ?", relPath); err != nil {
@@ -862,10 +866,10 @@ func (m *Manager) Status() MemoryStatus {
 	status.LastSyncTime = m.lastSyncTime
 
 	// Count files
-	m.db.QueryRow("SELECT COUNT(*) FROM files").Scan(&status.TotalFiles)
+	_ = m.db.QueryRow("SELECT COUNT(*) FROM files").Scan(&status.TotalFiles)
 
 	// Count chunks
-	m.db.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&status.TotalChunks)
+	_ = m.db.QueryRow("SELECT COUNT(*) FROM chunks").Scan(&status.TotalChunks)
 
 	// Calculate cache hit rate
 	total := m.stats.cacheHits + m.stats.cacheMisses
@@ -882,7 +886,7 @@ func (m *Manager) Close() error {
 	m.logger.Info().Msg("Closing memory manager")
 
 	if m.watcher != nil {
-		m.watcher.Stop()
+		_ = m.watcher.Stop()
 	}
 
 	return m.db.Close()

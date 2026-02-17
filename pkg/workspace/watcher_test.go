@@ -24,7 +24,7 @@ func TestWorkspaceWatcher_Create(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, watcher)
 
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 }
 
 func TestWorkspaceWatcher_StartStop(t *testing.T) {
@@ -72,7 +72,7 @@ func TestWorkspaceWatcher_FileAdded(t *testing.T) {
 
 	err = watcher.Start()
 	require.NoError(t, err)
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	// Create a new file
 	testFile := filepath.Join(ws.Path, "test.md")
@@ -119,7 +119,7 @@ func TestWorkspaceWatcher_FileChanged(t *testing.T) {
 
 	err = watcher.Start()
 	require.NoError(t, err)
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	// Give watcher time to initialize
 	time.Sleep(100 * time.Millisecond)
@@ -169,7 +169,7 @@ func TestWorkspaceWatcher_FileDeleted(t *testing.T) {
 
 	err = watcher.Start()
 	require.NoError(t, err)
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	// Give watcher time to initialize
 	time.Sleep(100 * time.Millisecond)
@@ -251,7 +251,7 @@ func TestWorkspaceWatcher_Debouncing(t *testing.T) {
 
 	err = watcher.Start()
 	require.NoError(t, err)
-	defer watcher.Stop()
+	defer func() { _ = watcher.Stop() }()
 
 	// Give watcher time to initialize
 	time.Sleep(100 * time.Millisecond)

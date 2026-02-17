@@ -286,7 +286,12 @@ func (sm *SessionManager) ExtractMetadata(page *rod.Page) (*Metadata, error) {
 	}
 
 	metadata := &Metadata{}
-	result.Value.Unmarshal(metadata)
+	if err := result.Value.Unmarshal(metadata); err != nil {
+		return nil, &BrowserError{
+			Code:    ErrCodeScriptExecution,
+			Message: fmt.Sprintf("Failed to unmarshal metadata: %v", err),
+		}
+	}
 	return metadata, nil
 }
 
@@ -304,7 +309,12 @@ func (sm *SessionManager) ExtractLinks(page *rod.Page) ([]Link, error) {
 	}
 
 	var links []Link
-	result.Value.Unmarshal(&links)
+	if err := result.Value.Unmarshal(&links); err != nil {
+		return nil, &BrowserError{
+			Code:    ErrCodeScriptExecution,
+			Message: fmt.Sprintf("Failed to unmarshal links: %v", err),
+		}
+	}
 	return links, nil
 }
 

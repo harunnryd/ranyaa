@@ -29,8 +29,8 @@ func TestRPCRouter_RegisterMethod(t *testing.T) {
 			return "result2", nil
 		}
 
-		router.RegisterMethod("test.replace", handler1)
-		router.RegisterMethod("test.replace", handler2)
+		_ = router.RegisterMethod("test.replace", handler1)
+		_ = router.RegisterMethod("test.replace", handler2)
 
 		assert.True(t, router.HasMethod("test.replace"))
 	})
@@ -50,7 +50,7 @@ func TestRPCRouter_UnregisterMethod(t *testing.T) {
 			return "result", nil
 		}
 
-		router.RegisterMethod("test.method", handler)
+		_ = router.RegisterMethod("test.method", handler)
 		assert.True(t, router.HasMethod("test.method"))
 
 		router.UnregisterMethod("test.method")
@@ -123,7 +123,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			}, nil
 		}
 
-		router.RegisterMethod("test.echo", handler)
+		_ = router.RegisterMethod("test.echo", handler)
 
 		req := &RPCRequest{
 			ID:     "1",
@@ -160,7 +160,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			return nil, fmt.Errorf("handler error")
 		}
 
-		router.RegisterMethod("test.error", handler)
+		_ = router.RegisterMethod("test.error", handler)
 
 		req := &RPCRequest{
 			ID:     "1",
@@ -180,7 +180,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			return "ok", nil
 		}
 
-		router.RegisterMethod("test.id", handler)
+		_ = router.RegisterMethod("test.id", handler)
 
 		req := &RPCRequest{
 			ID:     "unique-id-123",
@@ -200,9 +200,9 @@ func TestRPCRouter_GetMethods(t *testing.T) {
 			return nil, nil
 		}
 
-		router.RegisterMethod("method1", handler)
-		router.RegisterMethod("method2", handler)
-		router.RegisterMethod("method3", handler)
+		_ = router.RegisterMethod("method1", handler)
+		_ = router.RegisterMethod("method2", handler)
+		_ = router.RegisterMethod("method3", handler)
 
 		methods := router.GetMethods()
 		assert.Len(t, methods, 3)
