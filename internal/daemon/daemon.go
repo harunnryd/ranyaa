@@ -48,7 +48,7 @@ type Daemon struct {
 	browserContext *browser.BrowserServerContext
 	pluginRuntime  *plugin.PluginRuntime
 	orchestrator   *orchestrator.Orchestrator
-	planner       *planner.Planner
+	planner        *planner.Planner
 	subagentCoord  *subagent.Coordinator
 
 	// Services
@@ -287,14 +287,14 @@ func (d *Daemon) initializeCoreModules() error {
 func (d *Daemon) initializeServices() error {
 	// 1. Gateway Server
 	gatewayServer, err := gateway.NewServer(gateway.Config{
-		Port:           d.config.Gateway.Port,
-		SharedSecret:   d.config.Gateway.SharedSecret,
-		CommandQueue:   d.queue,
-		AgentRunner:    d.agentRunner,
+		Port:            d.config.Gateway.Port,
+		SharedSecret:    d.config.Gateway.SharedSecret,
+		CommandQueue:    d.queue,
+		AgentRunner:     d.agentRunner,
 		AgentDispatcher: d.dispatchGatewayRequest,
-		SessionManager: d.sessionMgr,
-		MemoryManager:  d.memoryMgr,
-		Logger:         d.logger.GetZerolog(),
+		SessionManager:  d.sessionMgr,
+		MemoryManager:   d.memoryMgr,
+		Logger:          d.logger.GetZerolog(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create gateway server: %w", err)

@@ -22,35 +22,35 @@ import (
 
 // Server is the main Gateway Server
 type Server struct {
-	port           int
-	sharedSecret   string
-	server         *http.Server
-	upgrader       websocket.Upgrader
-	clients        *ClientRegistry
-	router         *RPCRouter
-	authHandler    *AuthHandler
-	broadcaster    *EventBroadcaster
-	commandQueue   *commandqueue.CommandQueue
-	agentRunner    *agent.Runner
+	port            int
+	sharedSecret    string
+	server          *http.Server
+	upgrader        websocket.Upgrader
+	clients         *ClientRegistry
+	router          *RPCRouter
+	authHandler     *AuthHandler
+	broadcaster     *EventBroadcaster
+	commandQueue    *commandqueue.CommandQueue
+	agentRunner     *agent.Runner
 	agentDispatcher AgentDispatcher
-	sessionManager *session.SessionManager
-	memoryManager  *memory.Manager
-	logger         zerolog.Logger
-	isShuttingDown bool
-	shutdownMu     sync.RWMutex
-	inFlightReqs   sync.WaitGroup
+	sessionManager  *session.SessionManager
+	memoryManager   *memory.Manager
+	logger          zerolog.Logger
+	isShuttingDown  bool
+	shutdownMu      sync.RWMutex
+	inFlightReqs    sync.WaitGroup
 }
 
 // Config holds server configuration
 type Config struct {
-	Port           int
-	SharedSecret   string
-	CommandQueue   *commandqueue.CommandQueue
-	AgentRunner    *agent.Runner
+	Port            int
+	SharedSecret    string
+	CommandQueue    *commandqueue.CommandQueue
+	AgentRunner     *agent.Runner
 	AgentDispatcher AgentDispatcher
-	SessionManager *session.SessionManager
-	MemoryManager  *memory.Manager
-	Logger         zerolog.Logger
+	SessionManager  *session.SessionManager
+	MemoryManager   *memory.Manager
+	Logger          zerolog.Logger
 }
 
 // AgentDispatchRequest carries an ingress request into the canonical runtime flow.
@@ -94,18 +94,18 @@ func NewServer(cfg Config) (*Server, error) {
 	broadcaster := NewEventBroadcaster(clients, cfg.Logger)
 
 	s := &Server{
-		port:           cfg.Port,
-		sharedSecret:   cfg.SharedSecret,
-		clients:        clients,
-		router:         router,
-		authHandler:    authHandler,
-		broadcaster:    broadcaster,
-		commandQueue:   cfg.CommandQueue,
-		agentRunner:    cfg.AgentRunner,
+		port:            cfg.Port,
+		sharedSecret:    cfg.SharedSecret,
+		clients:         clients,
+		router:          router,
+		authHandler:     authHandler,
+		broadcaster:     broadcaster,
+		commandQueue:    cfg.CommandQueue,
+		agentRunner:     cfg.AgentRunner,
 		agentDispatcher: cfg.AgentDispatcher,
-		sessionManager: cfg.SessionManager,
-		memoryManager:  cfg.MemoryManager,
-		logger:         cfg.Logger,
+		sessionManager:  cfg.SessionManager,
+		memoryManager:   cfg.MemoryManager,
+		logger:          cfg.Logger,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for now

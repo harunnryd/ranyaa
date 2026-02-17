@@ -281,6 +281,7 @@ func TestIntegrationCLIMessageFlow(t *testing.T) {
 	provider := &scriptedProvider{
 		responses: []*agent.LLMResponse{
 			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "integration_trace", Parameters: map[string]interface{}{}}}},
+			{Content: "integration-step-1"},
 			{Content: "integration-ok"},
 		},
 	}
@@ -342,6 +343,150 @@ func TestIntegrationCLIMessageFlow(t *testing.T) {
 	require.GreaterOrEqual(t, len(entries), 2)
 	assert.Equal(t, "user", entries[0].Message.Role)
 	assert.Equal(t, "assistant", entries[len(entries)-1].Message.Role)
+}
+
+func TestIntegrationPlannerMandatoryBeforeTools(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "planner-mandatory.log")
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "planner_probe_tool", Parameters: map[string]interface{}{}}}},
+			{Content: "tool-complete"},
+		},
+	}
+	d := createIntegrationDaemonWithLogFile(t, provider, false, logPath)
+
+	require.NoError(t, d.toolExecutor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "planner_probe_tool",
+		Description: "Test planner ordering",
+		Category:    toolexecutor.CategoryRead,
+		Parameters:  []toolexecutor.ToolParameter{},
+		Handler: func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+			return map[string]interface{}{"ok": true}, nil
+		},
+	}))
+
+	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "read a file and summarize it",
+		"sessionKey": "planner:mandatory",
+		"config": map[string]interface{}{
+			"model": "integration-model",
+			"tools": []interface{}{"planner_probe_tool"},
+		},
+	})
+	require.Nil(t, rpcResp.Error)
+
+	waitForCondition(t, 3*time.Second, "planner and tool events in log", func() bool {
+		events := readStructuredLogs(t, logPath)
+		return findEventIndex(events, "planner:plan_created", "") >= 0 &&
+			findEventIndex(events, "tool:execute", "planner_probe_tool") >= 0
+	})
+
+	events := readStructuredLogs(t, logPath)
+	planIdx := findEventIndex(events, "planner:plan_created", "")
+	toolIdx := findEventIndex(events, "tool:execute", "planner_probe_tool")
+	require.NotEqual(t, -1, planIdx, "expected planner:plan_created event")
+	require.NotEqual(t, -1, toolIdx, "expected tool:execute event")
+	assert.Less(t, planIdx, toolIdx, "planner must run before any tool execution")
+}
+
+func TestIntegrationPolicyDenyBlocksShellWithoutSandbox(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "policy-deny.log")
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "policy_blocked_shell", Parameters: map[string]interface{}{}}}},
+			{Content: "done"},
+		},
+	}
+	d := createIntegrationDaemonWithLogFile(t, provider, false, logPath)
+
+	var commandExecuted atomic.Bool
+	require.NoError(t, d.toolExecutor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "policy_blocked_shell",
+		Description: "Shell tool blocked by policy",
+		Category:    toolexecutor.CategoryShell,
+		Parameters:  []toolexecutor.ToolParameter{},
+		Handler: func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+			commandExecuted.Store(true)
+			return "should-not-run", nil
+		},
+	}))
+
+	d.config.Agents[0].Tools.Allow = []string{"*"}
+	d.config.Agents[0].Tools.Deny = []string{"policy_blocked_shell"}
+
+	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "run the shell command",
+		"sessionKey": "policy:deny",
+		"config": map[string]interface{}{
+			"model": "integration-model",
+			"tools": []interface{}{"policy_blocked_shell"},
+		},
+	})
+	require.Nil(t, rpcResp.Error)
+	assert.False(t, commandExecuted.Load(), "shell tool handler must not execute when denied")
+
+	waitForCondition(t, 3*time.Second, "policy denial event in log", func() bool {
+		events := readStructuredLogs(t, logPath)
+		return findEventIndex(events, "tool:denied", "policy_blocked_shell") >= 0
+	})
+
+	events := readStructuredLogs(t, logPath)
+	denyIdx := findEventIndex(events, "tool:denied", "policy_blocked_shell")
+	sandboxIdx := findEventIndex(events, "sandbox:execute", "policy_blocked_shell")
+	require.NotEqual(t, -1, denyIdx, "expected tool:denied audit event")
+	assert.Equal(t, -1, sandboxIdx, "sandbox must not execute for denied tools")
+}
+
+func TestIntegrationSandboxMandatoryForRiskyTools(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "sandbox-mandatory.log")
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "sandbox_risky_shell", Parameters: map[string]interface{}{}}}},
+			{Content: "done"},
+		},
+	}
+	d := createIntegrationDaemonWithLogFile(t, provider, false, logPath)
+
+	var riskyExecuted atomic.Bool
+	require.NoError(t, d.toolExecutor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "sandbox_risky_shell",
+		Description: "Risky shell tool",
+		Category:    toolexecutor.CategoryShell,
+		Parameters:  []toolexecutor.ToolParameter{},
+		Handler: func(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+			riskyExecuted.Store(true)
+			return "executed", nil
+		},
+	}))
+
+	d.config.Agents[0].Tools.Allow = []string{"*"}
+	d.config.Agents[0].Tools.Deny = []string{}
+
+	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "execute risky shell task",
+		"sessionKey": "sandbox:mandatory",
+		"config": map[string]interface{}{
+			"model": "integration-model",
+			"tools": []interface{}{"sandbox_risky_shell"},
+		},
+	})
+	require.Nil(t, rpcResp.Error)
+	assert.True(t, riskyExecuted.Load(), "risky tool should execute when policy allows")
+
+	waitForCondition(t, 3*time.Second, "sandbox execution event in log", func() bool {
+		events := readStructuredLogs(t, logPath)
+		return findEventIndex(events, "sandbox:execute", "sandbox_risky_shell") >= 0
+	})
+
+	events := readStructuredLogs(t, logPath)
+	sandboxIdx := findEventIndex(events, "sandbox:execute", "sandbox_risky_shell")
+	require.NotEqual(t, -1, sandboxIdx, "expected sandbox:execute event for risky tools")
+
+	sandboxEvent := events[sandboxIdx]
+	traceID, traceOK := sandboxEvent["trace_id"].(string)
+	runID, runOK := sandboxEvent["run_id"].(string)
+	assert.True(t, traceOK && traceID != "", "sandbox event must include trace_id")
+	assert.True(t, runOK && runID != "", "sandbox event must include run_id")
 }
 
 func TestIntegrationCLIMessageOrdering(t *testing.T) {
@@ -476,16 +621,6 @@ func TestIntegrationCronJobExecution(t *testing.T) {
 	d := createIntegrationDaemon(t, provider, false)
 
 	var laneSeen atomic.Bool
-	jobIDChan := make(chan string, 1)
-	d.queue.On("enqueued", func(evt commandqueue.Event) {
-		select {
-		case jobID := <-jobIDChan:
-			if evt.Lane == "session-cron:"+jobID {
-				laneSeen.Store(true)
-			}
-		default:
-		}
-	})
 
 	job, err := d.cronService.AddJob(cron.AddParams{
 		Name:    "integration-cron-job",
@@ -502,7 +637,11 @@ func TestIntegrationCronJobExecution(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	jobIDChan <- job.ID
+	d.queue.On("enqueued", func(evt commandqueue.Event) {
+		if evt.Lane == "session-cron:"+job.ID {
+			laneSeen.Store(true)
+		}
+	})
 
 	require.NoError(t, d.cronService.RunJob(job.ID, cron.RunModeForce))
 

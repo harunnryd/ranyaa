@@ -8,13 +8,13 @@ import (
 
 // AgentRunParams contains input parameters for agent execution
 type AgentRunParams struct {
-	Prompt        string                     `json:"prompt"`
-	SessionKey    string                     `json:"session_key"`
-	Config        AgentConfig                `json:"config"`
-	CWD           string                     `json:"cwd,omitempty"`
-	AgentID       string                     `json:"agent_id,omitempty"`
-	ToolPolicy    *toolexecutor.ToolPolicy   `json:"tool_policy,omitempty"`
-	SandboxPolicy map[string]interface{}     `json:"sandbox_policy,omitempty"`
+	Prompt        string                   `json:"prompt"`
+	SessionKey    string                   `json:"session_key"`
+	Config        AgentConfig              `json:"config"`
+	CWD           string                   `json:"cwd,omitempty"`
+	AgentID       string                   `json:"agent_id,omitempty"`
+	ToolPolicy    *toolexecutor.ToolPolicy `json:"tool_policy,omitempty"`
+	SandboxPolicy map[string]interface{}   `json:"sandbox_policy,omitempty"`
 }
 
 // AgentConfig configures agent behavior

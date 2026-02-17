@@ -588,11 +588,11 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 				toolCall.Name,
 				toolCall.Parameters,
 				&toolexecutor.ExecutionContext{
-					SessionKey: params.SessionKey,
-					WorkingDir: params.CWD,
-					Timeout:    30 * time.Second,
-					AgentID:    params.AgentID,
-					ToolPolicy: params.ToolPolicy,
+					SessionKey:    params.SessionKey,
+					WorkingDir:    params.CWD,
+					Timeout:       30 * time.Second,
+					AgentID:       params.AgentID,
+					ToolPolicy:    params.ToolPolicy,
 					SandboxPolicy: params.SandboxPolicy,
 				},
 			)

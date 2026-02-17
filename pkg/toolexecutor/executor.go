@@ -404,7 +404,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 		return ToolResult{
 			Success:  false,
-			Error:    fmt.Sprintf("tool '%s' denied by policy: %s", toolName, eval.Reason),
+			Error:    fmt.Sprintf("tool '%s' is not allowed by agent policy: %s", toolName, eval.Reason),
 			Metadata: metadata,
 		}
 	}
@@ -626,8 +626,12 @@ func (te *ToolExecutor) lookup(toolName string) (*ToolDefinition, *gojsonschema.
 	if tool != nil {
 		if tool.Category != "" {
 			category = tool.Category
-		} else if registered, err := te.toolRegistry.GetCategory(toolName); err == nil {
-			category = registered
+		} else if te.toolRegistry != nil {
+			if registered, err := te.toolRegistry.GetCategory(toolName); err == nil {
+				category = registered
+			} else {
+				category = inferToolCategory(toolName, tool.Description)
+			}
 		} else {
 			category = inferToolCategory(toolName, tool.Description)
 		}

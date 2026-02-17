@@ -319,12 +319,12 @@ func (d *Daemon) registerOrchestratorAgents() error {
 		}
 
 		oCfg := orchestrator.AgentConfig{
-			ID:          cfg.ID,
-			Name:        name,
-			Role:        role,
-			Model:       cfg.Model,
-			Temperature: cfg.Temperature,
-			MaxTokens:   cfg.MaxTokens,
+			ID:           cfg.ID,
+			Name:         name,
+			Role:         role,
+			Model:        cfg.Model,
+			Temperature:  cfg.Temperature,
+			MaxTokens:    cfg.MaxTokens,
 			SystemPrompt: cfg.SystemPrompt,
 			Tools: orchestrator.ToolPolicy{
 				Allow: append([]string{}, cfg.Tools.Allow...),
