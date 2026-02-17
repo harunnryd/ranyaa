@@ -19,11 +19,11 @@ import (
 
 // Runner orchestrates AI agent execution
 type Runner struct {
-	sessionManager *session.SessionManager
-	toolExecutor   *toolexecutor.ToolExecutor
-	commandQueue   *commandqueue.CommandQueue
-	memoryManager  *memory.Manager
-	logger         zerolog.Logger
+	sessionManager  *session.SessionManager
+	toolExecutor    *toolexecutor.ToolExecutor
+	commandQueue    *commandqueue.CommandQueue
+	memoryManager   *memory.Manager
+	logger          zerolog.Logger
 	providerFactory ProviderCreator
 
 	// Auth profiles
@@ -37,12 +37,12 @@ type Runner struct {
 
 // Config holds runner configuration
 type Config struct {
-	SessionManager *session.SessionManager
-	ToolExecutor   *toolexecutor.ToolExecutor
-	CommandQueue   *commandqueue.CommandQueue
-	MemoryManager  *memory.Manager
-	Logger         zerolog.Logger
-	AuthProfiles   []AuthProfile
+	SessionManager  *session.SessionManager
+	ToolExecutor    *toolexecutor.ToolExecutor
+	CommandQueue    *commandqueue.CommandQueue
+	MemoryManager   *memory.Manager
+	Logger          zerolog.Logger
+	AuthProfiles    []AuthProfile
 	ProviderFactory ProviderCreator
 }
 
@@ -74,14 +74,14 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}
 
 	return &Runner{
-		sessionManager: cfg.SessionManager,
-		toolExecutor:   cfg.ToolExecutor,
-		commandQueue:   cfg.CommandQueue,
-		memoryManager:  cfg.MemoryManager,
-		logger:         cfg.Logger,
+		sessionManager:  cfg.SessionManager,
+		toolExecutor:    cfg.ToolExecutor,
+		commandQueue:    cfg.CommandQueue,
+		memoryManager:   cfg.MemoryManager,
+		logger:          cfg.Logger,
 		providerFactory: providerFactory,
-		authProfiles:   cfg.AuthProfiles,
-		activeRuns:     make(map[string]context.CancelFunc),
+		authProfiles:    cfg.AuthProfiles,
+		activeRuns:      make(map[string]context.CancelFunc),
 	}, nil
 }
 

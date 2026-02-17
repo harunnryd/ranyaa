@@ -26,10 +26,10 @@ type moduleMetrics struct {
 	toolExecutionDuration *prometheus.HistogramVec
 	toolErrorsTotal       *prometheus.CounterVec
 
-	agentRunTotal      *prometheus.CounterVec
-	agentRunDuration   *prometheus.HistogramVec
-	agentErrorsTotal   *prometheus.CounterVec
-	providerCooldown   *prometheus.GaugeVec
+	agentRunTotal    *prometheus.CounterVec
+	agentRunDuration *prometheus.HistogramVec
+	agentErrorsTotal *prometheus.CounterVec
+	providerCooldown *prometheus.GaugeVec
 }
 
 var (

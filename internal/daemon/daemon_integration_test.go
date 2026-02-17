@@ -481,7 +481,7 @@ func TestIntegrationCronSchedulingAndPersistence(t *testing.T) {
 	var firstFail atomic.Bool
 
 	svc, err := cron.NewService(cron.ServiceOptions{
-		StorePath: storePath,
+		StorePath:          storePath,
 		EnqueueSystemEvent: func(_ string, _ string) {},
 		RunIsolatedAgentJob: func(_ *cron.Job, _ string) error {
 			runCount.Add(1)
