@@ -1,5 +1,7 @@
 package workspace
 
+import "strings"
+
 import (
 	"os"
 	"path/filepath"
@@ -83,9 +85,14 @@ func generateInvalidJSON() string {
 // generateLargeFile generates a file content larger than the specified size
 func generateLargeFile(size int) string {
 	line := "This is a test line to make the file large.\n"
-	result := ""
-	for len(result) < size {
-		result += line
+	var builder strings.Builder
+	builder.Grow(size + len(line))
+	for builder.Len() < size {
+		builder.WriteString(line)
+	}
+	result := builder.String()
+	if len(result) > size {
+		return result[:size]
 	}
 	return result
 }
