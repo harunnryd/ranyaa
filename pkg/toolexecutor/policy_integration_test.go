@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Unit test: Policy check before execution
@@ -14,7 +15,7 @@ func TestPolicyIntegration_CheckBeforeExecution(t *testing.T) {
 	registry := NewToolRegistry()
 
 	// Register tool
-	registry.Register("test_tool", "Test tool", CategoryGeneral)
+	require.NoError(t, registry.Register("test_tool", "Test tool", CategoryGeneral))
 	_ = executor.RegisterTool(ToolDefinition{
 		Name:        "test_tool",
 		Description: "Test tool",
@@ -93,14 +94,14 @@ func TestPolicyIntegration_BlockExecution(t *testing.T) {
 func TestPolicyIntegration_PolicyViolationError(t *testing.T) {
 	executor := New()
 
-	executor.RegisterTool(ToolDefinition{
+	require.NoError(t, executor.RegisterTool(ToolDefinition{
 		Name:        "test_tool",
 		Description: "Test tool",
 		Parameters:  []ToolParameter{},
 		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "result", nil
 		},
-	})
+	}))
 
 	t.Run("policy violation error format", func(t *testing.T) {
 		policy := &ToolPolicy{
@@ -142,14 +143,14 @@ func TestPolicyIntegration_PolicyViolationError(t *testing.T) {
 func TestPolicyIntegration_NilPolicy(t *testing.T) {
 	executor := New()
 
-	executor.RegisterTool(ToolDefinition{
+	require.NoError(t, executor.RegisterTool(ToolDefinition{
 		Name:        "test_tool",
 		Description: "Test tool",
 		Parameters:  []ToolParameter{},
 		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "result", nil
 		},
-	})
+	}))
 
 	t.Run("nil policy allows all tools", func(t *testing.T) {
 		execCtx := &ExecutionContext{
@@ -177,15 +178,15 @@ func TestPolicyIntegration_Integration_MultipleTools(t *testing.T) {
 	// Register multiple tools
 	tools := []string{"tool1", "tool2", "tool3", "tool4"}
 	for _, toolName := range tools {
-		registry.Register(toolName, "Test tool", CategoryGeneral)
-		executor.RegisterTool(ToolDefinition{
+		require.NoError(t, registry.Register(toolName, "Test tool", CategoryGeneral))
+		require.NoError(t, executor.RegisterTool(ToolDefinition{
 			Name:        toolName,
 			Description: "Test tool",
 			Parameters:  []ToolParameter{},
 			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				return "executed", nil
 			},
-		})
+		}))
 	}
 
 	policy := &ToolPolicy{
@@ -223,19 +224,19 @@ func TestPolicyIntegration_Integration_WithCategories(t *testing.T) {
 	registry := NewToolRegistry()
 
 	// Register tools with different categories
-	registry.Register("read_tool", "Read tool", CategoryRead)
-	registry.Register("write_tool", "Write tool", CategoryWrite)
-	registry.Register("shell_tool", "Shell tool", CategoryShell)
+	require.NoError(t, registry.Register("read_tool", "Read tool", CategoryRead))
+	require.NoError(t, registry.Register("write_tool", "Write tool", CategoryWrite))
+	require.NoError(t, registry.Register("shell_tool", "Shell tool", CategoryShell))
 
 	for _, toolName := range []string{"read_tool", "write_tool", "shell_tool"} {
-		executor.RegisterTool(ToolDefinition{
+		require.NoError(t, executor.RegisterTool(ToolDefinition{
 			Name:        toolName,
 			Description: "Test tool",
 			Parameters:  []ToolParameter{},
 			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				return "executed", nil
 			},
-		})
+		}))
 	}
 
 	// Policy that allows read and write, but denies shell
@@ -273,14 +274,14 @@ func TestPolicyIntegration_Integration_ConcurrentExecution(t *testing.T) {
 	// Register tools
 	for i := 0; i < 10; i++ {
 		toolName := fmt.Sprintf("tool_%d", i)
-		executor.RegisterTool(ToolDefinition{
+		require.NoError(t, executor.RegisterTool(ToolDefinition{
 			Name:        toolName,
 			Description: "Test tool",
 			Parameters:  []ToolParameter{},
 			Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 				return "executed", nil
 			},
-		})
+		}))
 	}
 
 	policy := &ToolPolicy{
@@ -326,23 +327,23 @@ func TestPolicyIntegration_Integration_WithPolicyEngine(t *testing.T) {
 	evaluator := NewPolicyEvaluator(policyEngine)
 
 	// Register tools
-	executor.RegisterTool(ToolDefinition{
+	require.NoError(t, executor.RegisterTool(ToolDefinition{
 		Name:        "allowed_tool",
 		Description: "Allowed tool",
 		Parameters:  []ToolParameter{},
 		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "executed", nil
 		},
-	})
+	}))
 
-	executor.RegisterTool(ToolDefinition{
+	require.NoError(t, executor.RegisterTool(ToolDefinition{
 		Name:        "denied_tool",
 		Description: "Denied tool",
 		Parameters:  []ToolParameter{},
 		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "executed", nil
 		},
-	})
+	}))
 
 	policy := &ToolPolicy{
 		Allow: []string{"allowed_tool"},

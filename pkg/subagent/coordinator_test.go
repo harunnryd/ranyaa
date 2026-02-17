@@ -736,7 +736,7 @@ func TestGetStats(t *testing.T) {
 		_ = coordinator.UpdateRunStatus(runID1, StatusRunning, nil)
 		_ = coordinator.UpdateRunStatus(runID2, StatusCompleted, nil)
 		_ = coordinator.UpdateRunStatus(runID3, StatusFailed, nil)
-		coordinator.UpdateRunStatus(runID4, StatusAborted, nil)
+		_ = coordinator.UpdateRunStatus(runID4, StatusAborted, nil)
 
 		stats := coordinator.GetStats()
 

@@ -128,8 +128,8 @@ func TestToolRegistry_FilterByCategories(t *testing.T) {
 
 func TestCategoryMatcher_MatchesCategory(t *testing.T) {
 	registry := NewToolRegistry()
-	registry.Register("read_file", "Read file", CategoryRead)
-	registry.Register("write_file", "Write file", CategoryWrite)
+	require.NoError(t, registry.Register("read_file", "Read file", CategoryRead))
+	require.NoError(t, registry.Register("write_file", "Write file", CategoryWrite))
 
 	matcher := NewCategoryMatcher(registry)
 
@@ -150,9 +150,9 @@ func TestCategoryMatcher_MatchesCategory(t *testing.T) {
 
 func TestCategoryMatcher_ApplyCategoryPolicy(t *testing.T) {
 	registry := NewToolRegistry()
-	registry.Register("read_file", "Read file", CategoryRead)
-	registry.Register("write_file", "Write file", CategoryWrite)
-	registry.Register("exec_command", "Execute command", CategoryShell)
+	require.NoError(t, registry.Register("read_file", "Read file", CategoryRead))
+	require.NoError(t, registry.Register("write_file", "Write file", CategoryWrite))
+	require.NoError(t, registry.Register("exec_command", "Execute command", CategoryShell))
 
 	matcher := NewCategoryMatcher(registry)
 

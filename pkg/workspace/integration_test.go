@@ -168,7 +168,7 @@ api:
   url: https://api.example.com
 content: file://` + contentFile + `
 `
-	os.WriteFile(configFile, []byte(configContent), 0644)
+	_ = os.WriteFile(configFile, []byte(configContent), 0644)
 
 	// Create workspace manager
 	config := WorkspaceConfig{
@@ -224,7 +224,7 @@ func TestIntegration_CriticalFileReload(t *testing.T) {
 
 	// Create critical file
 	agentsFile := filepath.Join(tmpDir, "AGENTS.md")
-	os.WriteFile(agentsFile, []byte("# Agent Instructions"), 0644)
+	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions"), 0644)
 
 	// Track reload callback
 	var reloadCalled bool
@@ -257,7 +257,7 @@ func TestIntegration_CriticalFileReload(t *testing.T) {
 	reloadCalled = false
 
 	// Modify critical file
-	os.WriteFile(agentsFile, []byte("# Agent Instructions\nUpdated"), 0644)
+	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions\nUpdated"), 0644)
 
 	// Wait for change detection
 	time.Sleep(200 * time.Millisecond)
@@ -290,8 +290,8 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 	validFile := filepath.Join(tmpDir, "valid.yaml")
 	invalidFile := filepath.Join(tmpDir, "invalid.yaml")
 
-	os.WriteFile(validFile, []byte("key: value"), 0644)
-	os.WriteFile(invalidFile, []byte("invalid: yaml: content:"), 0644)
+	_ = os.WriteFile(validFile, []byte("key: value"), 0644)
+	_ = os.WriteFile(invalidFile, []byte("invalid: yaml: content:"), 0644)
 
 	// Track error events
 	var errorReceived bool
@@ -346,7 +346,7 @@ func TestIntegration_PerformanceBasic(t *testing.T) {
 	// Create multiple files
 	for i := 0; i < 50; i++ {
 		filename := filepath.Join(tmpDir, "file_"+string(rune('a'+i))+".md")
-		os.WriteFile(filename, []byte("Content "+string(rune('a'+i))), 0644)
+		_ = os.WriteFile(filename, []byte("Content "+string(rune('a'+i))), 0644)
 	}
 
 	// Create workspace manager
@@ -381,7 +381,7 @@ func TestIntegration_PerformanceBasic(t *testing.T) {
 	// Test file change performance
 	testFile := filepath.Join(tmpDir, "file_a.md")
 	start = time.Now()
-	os.WriteFile(testFile, []byte("Updated content"), 0644)
+	_ = os.WriteFile(testFile, []byte("Updated content"), 0644)
 
 	// Wait for change to be processed
 	time.Sleep(200 * time.Millisecond)

@@ -146,8 +146,8 @@ func TestFilterAndPolicy_Integration(t *testing.T) {
 	_ = registry.Register("read_file", "Read file", CategoryRead)
 	_ = registry.Register("read_dir", "Read directory", CategoryRead)
 	_ = registry.Register("write_file", "Write file", CategoryWrite)
-	registry.Register("delete_file", "Delete file", CategoryWrite)
-	registry.Register("exec_command", "Execute command", CategoryShell)
+	require.NoError(t, registry.Register("delete_file", "Delete file", CategoryWrite))
+	require.NoError(t, registry.Register("exec_command", "Execute command", CategoryShell))
 
 	// Filter by read category
 	readTools := registry.FilterByCategory(CategoryRead)

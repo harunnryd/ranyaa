@@ -144,7 +144,7 @@ func TestSandboxIntegration_ErrorHandling(t *testing.T) {
 		sm := NewSandboxManager(cfg)
 
 		ctx := context.Background()
-		defer sm.StopAll(ctx)
+		defer func() { _ = sm.StopAll(ctx) }()
 
 		req := sandbox.ExecuteRequest{
 			Command: "sleep",

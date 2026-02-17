@@ -110,8 +110,8 @@ func TestResolveFileRefs(t *testing.T) {
 	testFile1 := filepath.Join(tmpDir, "test1.txt")
 	testFile2 := filepath.Join(tmpDir, "test2.txt")
 
-	os.WriteFile(testFile1, []byte("content from file 1"), 0644)
-	os.WriteFile(testFile2, []byte("content from file 2"), 0644)
+	_ = os.WriteFile(testFile1, []byte("content from file 1"), 0644)
+	_ = os.WriteFile(testFile2, []byte("content from file 2"), 0644)
 
 	loader := NewWorkspaceLoader(tmpDir)
 
@@ -227,7 +227,7 @@ func TestResolveConfig(t *testing.T) {
 	// Set up test environment
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "content.txt")
-	os.WriteFile(testFile, []byte("file content"), 0644)
+	_ = os.WriteFile(testFile, []byte("file content"), 0644)
 
 	os.Setenv("TEST_VAR", "env_value")
 	defer os.Unsetenv("TEST_VAR")

@@ -100,7 +100,7 @@ func TestSandboxManager_ExecuteInSandbox(t *testing.T) {
 	sm := NewSandboxManager(cfg)
 
 	ctx := context.Background()
-	defer sm.StopAll(ctx)
+	defer func() { _ = sm.StopAll(ctx) }()
 
 	req := sandbox.ExecuteRequest{
 		Command: "echo",
@@ -159,7 +159,7 @@ func TestSandboxExecuteCommand(t *testing.T) {
 	sm := NewSandboxManager(cfg)
 
 	ctx := context.Background()
-	defer sm.StopAll(ctx)
+	defer func() { _ = sm.StopAll(ctx) }()
 
 	result, err := SandboxExecuteCommand(
 		ctx,

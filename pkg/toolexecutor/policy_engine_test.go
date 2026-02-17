@@ -328,8 +328,8 @@ func TestPolicyEngine_CheckToolCategory(t *testing.T) {
 	registry := NewToolRegistry()
 
 	// Register tools with categories
-	registry.Register("read_file", "Read file", CategoryRead)
-	registry.Register("write_file", "Write file", CategoryWrite)
+	require.NoError(t, registry.Register("read_file", "Read file", CategoryRead))
+	require.NoError(t, registry.Register("write_file", "Write file", CategoryWrite))
 
 	// Check categories
 	assert.True(t, pe.CheckToolCategory("read_file", "read", registry))

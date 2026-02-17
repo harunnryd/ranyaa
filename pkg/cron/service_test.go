@@ -258,7 +258,7 @@ func TestAddJob(t *testing.T) {
 func TestUpdateJob(t *testing.T) {
 	t.Run("updates job fields", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -280,7 +280,7 @@ func TestUpdateJob(t *testing.T) {
 
 	t.Run("recalculates next run on schedule change", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestUpdateJob(t *testing.T) {
 
 	t.Run("reschedules on enabled change", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Enabled = false
@@ -330,7 +330,7 @@ func TestUpdateJob(t *testing.T) {
 
 	t.Run("cancels timer on disable", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -354,7 +354,7 @@ func TestUpdateJob(t *testing.T) {
 
 	t.Run("returns error for non-existent job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		patch := JobPatch{}
 		_, err := service.UpdateJob("non-existent", patch)
@@ -364,7 +364,7 @@ func TestUpdateJob(t *testing.T) {
 
 	t.Run("emits updated event", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -385,7 +385,7 @@ func TestUpdateJob(t *testing.T) {
 func TestRemoveJob(t *testing.T) {
 	t.Run("removes job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -400,7 +400,7 @@ func TestRemoveJob(t *testing.T) {
 
 	t.Run("cancels timer", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -418,7 +418,7 @@ func TestRemoveJob(t *testing.T) {
 
 	t.Run("persists change", func(t *testing.T) {
 		service, _, storePath := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -435,7 +435,7 @@ func TestRemoveJob(t *testing.T) {
 
 	t.Run("returns error for non-existent job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		err := service.RemoveJob("non-existent")
 		assert.Error(t, err)
@@ -444,7 +444,7 @@ func TestRemoveJob(t *testing.T) {
 
 	t.Run("emits deleted event", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -463,7 +463,7 @@ func TestRemoveJob(t *testing.T) {
 func TestRunJob(t *testing.T) {
 	t.Run("executes system event payload", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Payload = Payload{
@@ -486,7 +486,7 @@ func TestRunJob(t *testing.T) {
 
 	t.Run("executes agent turn payload", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Payload = Payload{
@@ -509,7 +509,7 @@ func TestRunJob(t *testing.T) {
 
 	t.Run("respects enabled flag in due mode", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Enabled = false
@@ -529,7 +529,7 @@ func TestRunJob(t *testing.T) {
 
 	t.Run("ignores enabled flag in force mode", func(t *testing.T) {
 		service, callbacks, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params := createTestJob()
 		params.Enabled = false
@@ -549,7 +549,7 @@ func TestRunJob(t *testing.T) {
 
 	t.Run("returns error for non-existent job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		err := service.RunJob("non-existent", RunModeForce)
 		assert.Error(t, err)
@@ -560,7 +560,7 @@ func TestRunJob(t *testing.T) {
 func TestListJobs(t *testing.T) {
 	t.Run("returns all jobs", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		_, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -574,7 +574,7 @@ func TestListJobs(t *testing.T) {
 
 	t.Run("filters by agent ID", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params1 := createTestJob()
 		params1.AgentID = "agent1"
@@ -594,7 +594,7 @@ func TestListJobs(t *testing.T) {
 
 	t.Run("filters by enabled", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		params1 := createTestJob()
 		params1.Enabled = true
@@ -614,7 +614,7 @@ func TestListJobs(t *testing.T) {
 
 	t.Run("sorts by creation time", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job1, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -632,7 +632,7 @@ func TestListJobs(t *testing.T) {
 
 	t.Run("returns empty array when no jobs", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		jobs := service.ListJobs(nil, nil)
 		assert.Len(t, jobs, 0)
@@ -642,7 +642,7 @@ func TestListJobs(t *testing.T) {
 func TestGetJob(t *testing.T) {
 	t.Run("returns job by ID", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		job, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -654,7 +654,7 @@ func TestGetJob(t *testing.T) {
 
 	t.Run("returns nil for non-existent job", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		retrieved := service.GetJob("non-existent")
 		assert.Nil(t, retrieved)
@@ -709,7 +709,7 @@ func TestPersistence(t *testing.T) {
 
 	t.Run("handles missing file gracefully", func(t *testing.T) {
 		service, _, _ := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		// Should start with empty registry
 		jobs := service.ListJobs(nil, nil)
@@ -718,7 +718,7 @@ func TestPersistence(t *testing.T) {
 
 	t.Run("uses atomic file replacement", func(t *testing.T) {
 		service, _, storePath := createTestService(t)
-		defer service.Stop()
+		defer func() { _ = service.Stop() }()
 
 		_, err := service.AddJob(createTestJob())
 		require.NoError(t, err)
@@ -826,7 +826,7 @@ func TestRunJobAppliesRetryBackoffAndResetsOnSuccess(t *testing.T) {
 		OnEvent:             callbacks.onEvent,
 	})
 	require.NoError(t, err)
-	defer service.Stop()
+	defer func() { _ = service.Stop() }()
 
 	job, err := service.AddJob(AddParams{
 		Name:    "backoff-test",
@@ -847,7 +847,7 @@ func TestRunJobAppliesRetryBackoffAndResetsOnSuccess(t *testing.T) {
 	require.NoError(t, service.RunJob(job.ID, RunModeForce))
 	waitForStatus(t, service, job.ID, "error")
 
-	stateAfterError := service.GetJob(job.ID).State
+	stateAfterError := snapshotJobState(t, service, job.ID)
 	require.NotNil(t, stateAfterError.LastRunAtMs)
 	require.NotNil(t, stateAfterError.NextRunAtMs)
 	assert.Equal(t, 1, stateAfterError.ConsecutiveErrors)
@@ -860,7 +860,7 @@ func TestRunJobAppliesRetryBackoffAndResetsOnSuccess(t *testing.T) {
 	require.NoError(t, service.RunJob(job.ID, RunModeForce))
 	waitForStatus(t, service, job.ID, "ok")
 
-	stateAfterSuccess := service.GetJob(job.ID).State
+	stateAfterSuccess := snapshotJobState(t, service, job.ID)
 	assert.Equal(t, 0, stateAfterSuccess.ConsecutiveErrors)
 }
 
@@ -869,12 +869,31 @@ func waitForStatus(t *testing.T, service *Service, jobID string, status string) 
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		job := service.GetJob(jobID)
-		if job != nil && job.State.LastStatus == status && job.State.RunningAtMs == nil {
+		state, ok := trySnapshotJobState(service, jobID)
+		if ok && state.LastStatus == status && state.RunningAtMs == nil {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	t.Fatalf("timed out waiting for job %s status %s", jobID, status)
+}
+
+func snapshotJobState(t *testing.T, service *Service, jobID string) JobState {
+	t.Helper()
+
+	state, ok := trySnapshotJobState(service, jobID)
+	require.True(t, ok, "job not found: %s", jobID)
+	return state
+}
+
+func trySnapshotJobState(service *Service, jobID string) (JobState, bool) {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+
+	job, ok := service.jobs[jobID]
+	if !ok || job == nil {
+		return JobState{}, false
+	}
+	return job.State, true
 }

@@ -116,7 +116,7 @@ func Example_configResolution() {
 
 	// Create content file
 	contentFile := filepath.Join(tmpDir, "prompt.txt")
-	os.WriteFile(contentFile, []byte("You are a helpful assistant"), 0644)
+	_ = os.WriteFile(contentFile, []byte("You are a helpful assistant"), 0644)
 
 	// Create config file with env vars and file refs
 	configContent := `
@@ -125,7 +125,7 @@ api:
   url: https://api.example.com
 prompt: file://` + contentFile + `
 `
-	os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configContent), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configContent), 0644)
 
 	// Create workspace manager
 	config := workspace.WorkspaceConfig{
@@ -169,7 +169,7 @@ func Example_criticalFileReload() {
 
 	// Create critical file
 	agentsFile := filepath.Join(tmpDir, "AGENTS.md")
-	os.WriteFile(agentsFile, []byte("# Agent Instructions v1"), 0644)
+	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions v1"), 0644)
 
 	// Create workspace manager with reload callback
 	config := workspace.WorkspaceConfig{
@@ -192,7 +192,7 @@ func Example_criticalFileReload() {
 	time.Sleep(100 * time.Millisecond)
 
 	// Modify critical file
-	os.WriteFile(agentsFile, []byte("# Agent Instructions v2"), 0644)
+	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions v2"), 0644)
 
 	// Wait for change detection
 	time.Sleep(200 * time.Millisecond)

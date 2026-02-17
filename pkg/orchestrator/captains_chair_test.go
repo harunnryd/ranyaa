@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockAgentRunner is a mock implementation of AgentRunner
@@ -56,7 +57,7 @@ func setupCaptainsChair(t *testing.T, runner AgentRunner) (*Orchestrator, *Spawn
 		Temperature: 0.7,
 		MaxTokens:   4096,
 	}
-	orchestrator.RegisterAgent(captainConfig)
+	require.NoError(t, orchestrator.RegisterAgent(captainConfig))
 
 	executorConfig := AgentConfig{
 		ID:          "test-executor",
@@ -66,7 +67,7 @@ func setupCaptainsChair(t *testing.T, runner AgentRunner) (*Orchestrator, *Spawn
 		Temperature: 0.7,
 		MaxTokens:   4096,
 	}
-	orchestrator.RegisterAgent(executorConfig)
+	require.NoError(t, orchestrator.RegisterAgent(executorConfig))
 
 	criticConfig := AgentConfig{
 		ID:          "test-critic",
@@ -76,7 +77,7 @@ func setupCaptainsChair(t *testing.T, runner AgentRunner) (*Orchestrator, *Spawn
 		Temperature: 0.7,
 		MaxTokens:   4096,
 	}
-	orchestrator.RegisterAgent(criticConfig)
+	require.NoError(t, orchestrator.RegisterAgent(criticConfig))
 
 	return orchestrator, spawner, chair
 }

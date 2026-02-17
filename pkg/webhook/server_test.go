@@ -380,7 +380,7 @@ func TestHandleWebhookMissingSignature(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	require.NoError(t, server.RegisterWebhook(config))
 
 	// Make request without signature
 	body := `{"test":"data"}`
@@ -413,7 +413,7 @@ func TestHandleWebhookRateLimit(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	require.NoError(t, server.RegisterWebhook(config))
 
 	// Make requests until rate limited
 	for i := 0; i < 2; i++ {
@@ -521,7 +521,7 @@ func TestGetMetrics(t *testing.T) {
 			return WebhookResponse{Status: http.StatusOK}, nil
 		},
 	}
-	server.RegisterWebhook(config)
+	require.NoError(t, server.RegisterWebhook(config))
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook/test", nil)
 	w := httptest.NewRecorder()
