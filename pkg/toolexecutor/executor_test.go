@@ -194,6 +194,70 @@ func TestToolExecutor_Execute_Timeout(t *testing.T) {
 	assert.Contains(t, result.Error, "timeout")
 }
 
+func TestToolExecutor_ExecuteWithRetry_RetryableTransientError(t *testing.T) {
+	te := New()
+	te.SetRetryConfig(RetryConfig{
+		Enabled:        true,
+		MaxAttempts:    3,
+		InitialBackoff: 5 * time.Millisecond,
+		MaxBackoff:     10 * time.Millisecond,
+	})
+
+	var attempts int
+	def := ToolDefinition{
+		Name:        "flaky_tool",
+		Description: "Fails once with timeout then succeeds",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			attempts++
+			if attempts == 1 {
+				return nil, errors.New("network timeout while calling remote endpoint")
+			}
+			return "ok", nil
+		},
+	}
+
+	err := te.RegisterTool(def)
+	require.NoError(t, err)
+
+	result := te.ExecuteWithRetry(context.Background(), "flaky_tool", map[string]interface{}{}, nil)
+
+	assert.True(t, result.Success)
+	assert.Equal(t, "ok", result.Output)
+	assert.Equal(t, 2, attempts)
+	assert.Equal(t, 1, result.Metadata["retry_attempts"])
+}
+
+func TestToolExecutor_ExecuteWithRetry_DoesNotRetryPermanentError(t *testing.T) {
+	te := New()
+	te.SetRetryConfig(RetryConfig{
+		Enabled:        true,
+		MaxAttempts:    3,
+		InitialBackoff: 5 * time.Millisecond,
+		MaxBackoff:     10 * time.Millisecond,
+	})
+
+	var attempts int
+	def := ToolDefinition{
+		Name:        "permanent_failure",
+		Description: "Always fails with a permanent error",
+		Parameters:  []ToolParameter{},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			attempts++
+			return nil, errors.New("permission denied: operation blocked by policy")
+		},
+	}
+
+	err := te.RegisterTool(def)
+	require.NoError(t, err)
+
+	result := te.ExecuteWithRetry(context.Background(), "permanent_failure", map[string]interface{}{}, nil)
+
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "permission denied")
+	assert.Equal(t, 1, attempts)
+}
+
 func TestToolExecutor_Execute_OutputTruncation(t *testing.T) {
 	te := New()
 
