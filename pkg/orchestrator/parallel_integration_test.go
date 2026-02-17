@@ -182,11 +182,8 @@ func TestParallelExecutor_Integration_OnFailAbort(t *testing.T) {
 	logger := &mockLogger{}
 
 	// Create mock runner where one agent fails
-	executionCount := 0
 	runner := &mockAgentRunner{
 		runFunc: func(ctx context.Context, params AgentRunParams) (AgentResult, error) {
-			executionCount++
-
 			// First agent fails immediately
 			if params.Prompt == "failing task" {
 				return AgentResult{

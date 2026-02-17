@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // Test helpers
 
 type mockCallbacks struct {
+	mu           sync.Mutex
 	systemEvents []string
 	agentJobs    []*Job
 	heartbeats   int
@@ -29,20 +31,61 @@ func newMockCallbacks() *mockCallbacks {
 }
 
 func (m *mockCallbacks) enqueueSystemEvent(text string, agentID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.systemEvents = append(m.systemEvents, text)
 }
 
 func (m *mockCallbacks) runIsolatedAgentJob(job *Job, message string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.agentJobs = append(m.agentJobs, job)
 	return nil
 }
 
 func (m *mockCallbacks) requestHeartbeatNow() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.heartbeats++
 }
 
 func (m *mockCallbacks) onEvent(evt Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.events = append(m.events, evt)
+}
+
+func (m *mockCallbacks) snapshotEvents() []Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	copied := make([]Event, len(m.events))
+	copy(copied, m.events)
+	return copied
+}
+
+func (m *mockCallbacks) clearEvents() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = nil
+}
+
+func (m *mockCallbacks) snapshotSystemEvents() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	copied := make([]string, len(m.systemEvents))
+	copy(copied, m.systemEvents)
+	return copied
+}
+
+func (m *mockCallbacks) snapshotAgentJobs() []*Job {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	copied := make([]*Job, len(m.agentJobs))
+	copy(copied, m.agentJobs)
+	return copied
 }
 
 func createTestService(t *testing.T) (*Service, *mockCallbacks, string) {
@@ -131,8 +174,9 @@ func TestAddJob(t *testing.T) {
 		assert.Equal(t, params.Enabled, job.Enabled)
 
 		// Check event emitted
-		assert.Len(t, callbacks.events, 1)
-		assert.Equal(t, EventActionAdded, callbacks.events[0].Action)
+		events := callbacks.snapshotEvents()
+		assert.Len(t, events, 1)
+		assert.Equal(t, EventActionAdded, events[0].Action)
 	})
 
 	t.Run("sets creation timestamp", func(t *testing.T) {
@@ -370,15 +414,16 @@ func TestUpdateJob(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clear events
-		callbacks.events = nil
+		callbacks.clearEvents()
 
 		newName := "Updated"
 		patch := JobPatch{Name: &newName}
 		_, err = service.UpdateJob(job.ID, patch)
 		require.NoError(t, err)
 
-		assert.Len(t, callbacks.events, 1)
-		assert.Equal(t, EventActionUpdated, callbacks.events[0].Action)
+		events := callbacks.snapshotEvents()
+		assert.Len(t, events, 1)
+		assert.Equal(t, EventActionUpdated, events[0].Action)
 	})
 }
 
@@ -450,13 +495,14 @@ func TestRemoveJob(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clear events
-		callbacks.events = nil
+		callbacks.clearEvents()
 
 		err = service.RemoveJob(job.ID)
 		require.NoError(t, err)
 
-		assert.Len(t, callbacks.events, 1)
-		assert.Equal(t, EventActionDeleted, callbacks.events[0].Action)
+		events := callbacks.snapshotEvents()
+		assert.Len(t, events, 1)
+		assert.Equal(t, EventActionDeleted, events[0].Action)
 	})
 }
 
@@ -480,8 +526,9 @@ func TestRunJob(t *testing.T) {
 		// Wait for execution
 		time.Sleep(100 * time.Millisecond)
 
-		assert.Len(t, callbacks.systemEvents, 1)
-		assert.Equal(t, "test event", callbacks.systemEvents[0])
+		systemEvents := callbacks.snapshotSystemEvents()
+		assert.Len(t, systemEvents, 1)
+		assert.Equal(t, "test event", systemEvents[0])
 	})
 
 	t.Run("executes agent turn payload", func(t *testing.T) {
@@ -503,8 +550,9 @@ func TestRunJob(t *testing.T) {
 		// Wait for execution
 		time.Sleep(100 * time.Millisecond)
 
-		assert.Len(t, callbacks.agentJobs, 1)
-		assert.Equal(t, job.ID, callbacks.agentJobs[0].ID)
+		agentJobs := callbacks.snapshotAgentJobs()
+		assert.Len(t, agentJobs, 1)
+		assert.Equal(t, job.ID, agentJobs[0].ID)
 	})
 
 	t.Run("respects enabled flag in due mode", func(t *testing.T) {
@@ -524,7 +572,7 @@ func TestRunJob(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// Should not execute
-		assert.Len(t, callbacks.systemEvents, 0)
+		assert.Len(t, callbacks.snapshotSystemEvents(), 0)
 	})
 
 	t.Run("ignores enabled flag in force mode", func(t *testing.T) {
@@ -544,7 +592,7 @@ func TestRunJob(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// Should execute
-		assert.Len(t, callbacks.systemEvents, 1)
+		assert.Len(t, callbacks.snapshotSystemEvents(), 1)
 	})
 
 	t.Run("returns error for non-existent job", func(t *testing.T) {

@@ -2,26 +2,34 @@ package orchestrator
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
 
 // mockLogger implements the Logger interface for testing
 type mockLogger struct {
+	mu     sync.Mutex
 	infos  []string
 	errors []string
 	debugs []string
 }
 
 func (m *mockLogger) Info(msg string, fields ...interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.infos = append(m.infos, msg)
 }
 
 func (m *mockLogger) Error(msg string, err error, fields ...interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.errors = append(m.errors, msg)
 }
 
 func (m *mockLogger) Debug(msg string, fields ...interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.debugs = append(m.debugs, msg)
 }
 

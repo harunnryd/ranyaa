@@ -31,10 +31,11 @@ func TestInvocationManager_Invoke_Success(t *testing.T) {
 
 	// Create invocation request
 	req := &InvocationRequest{
-		NodeID:     "test-node-1",
-		Capability: CapabilityCameraSnap,
-		Parameters: map[string]interface{}{"quality": float64(80)},
-		Timeout:    5000,
+		InvocationID: "invoke-success-1",
+		NodeID:       "test-node-1",
+		Capability:   CapabilityCameraSnap,
+		Parameters:   map[string]interface{}{"quality": float64(80)},
+		Timeout:      5000,
 	}
 
 	// Start invocation in goroutine
@@ -102,10 +103,11 @@ func TestInvocationManager_Invoke_NodeOffline(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &InvocationRequest{
-		NodeID:     "test-node-1",
-		Capability: CapabilityCameraSnap,
-		Parameters: map[string]interface{}{},
-		Timeout:    5000,
+		InvocationID: "invoke-stats-1",
+		NodeID:       "test-node-1",
+		Capability:   CapabilityCameraSnap,
+		Parameters:   map[string]interface{}{},
+		Timeout:      5000,
 	}
 
 	response, err := im.Invoke(context.Background(), req)
@@ -162,10 +164,11 @@ func TestInvocationManager_Invoke_PermissionDenied(t *testing.T) {
 	// Don't grant permission
 
 	req := &InvocationRequest{
-		NodeID:     "test-node-1",
-		Capability: CapabilityCameraSnap,
-		Parameters: map[string]interface{}{},
-		Timeout:    5000,
+		InvocationID: "invoke-stats-1",
+		NodeID:       "test-node-1",
+		Capability:   CapabilityCameraSnap,
+		Parameters:   map[string]interface{}{},
+		Timeout:      5000,
 	}
 
 	response, err := im.Invoke(context.Background(), req)
@@ -269,10 +272,11 @@ func TestInvocationManager_Statistics(t *testing.T) {
 
 	// Perform successful invocation
 	req := &InvocationRequest{
-		NodeID:     "test-node-1",
-		Capability: CapabilityCameraSnap,
-		Parameters: map[string]interface{}{},
-		Timeout:    5000,
+		InvocationID: "invoke-stats-success-1",
+		NodeID:       "test-node-1",
+		Capability:   CapabilityCameraSnap,
+		Parameters:   map[string]interface{}{},
+		Timeout:      5000,
 	}
 
 	go func() {
