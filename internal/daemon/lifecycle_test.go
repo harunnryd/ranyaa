@@ -16,8 +16,13 @@ func TestNewLifecycleManager(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.WorkspacePath = tmpDir + "/workspace"
+	cfg.AI.Profiles = []config.AIProfile{{ID: "test-profile", Provider: "anthropic", APIKey: "sk-ant-test123", Priority: 1}}
 	cfg.Channels.Telegram.Enabled = false
+
+	// Create workspace directory
+	err := os.MkdirAll(cfg.WorkspacePath, 0755)
+	require.NoError(t, err)
 
 	logCfg := logger.Config{
 		Level:   "info",
@@ -41,8 +46,13 @@ func TestLifecycleManagerStartStop(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.WorkspacePath = tmpDir + "/workspace"
+	cfg.AI.Profiles = []config.AIProfile{{ID: "test-profile", Provider: "anthropic", APIKey: "sk-ant-test123", Priority: 1}}
 	cfg.Channels.Telegram.Enabled = false
+
+	// Create workspace directory
+	err := os.MkdirAll(cfg.WorkspacePath, 0755)
+	require.NoError(t, err)
 
 	logCfg := logger.Config{
 		Level:   "info",
@@ -79,8 +89,13 @@ func TestLifecycleManagerGetPID(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.WorkspacePath = tmpDir + "/workspace"
+	cfg.AI.Profiles = []config.AIProfile{{ID: "test-profile", Provider: "anthropic", APIKey: "sk-ant-test123", Priority: 1}}
 	cfg.Channels.Telegram.Enabled = false
+
+	// Create workspace directory
+	err := os.MkdirAll(cfg.WorkspacePath, 0755)
+	require.NoError(t, err)
 
 	logCfg := logger.Config{
 		Level:   "info",

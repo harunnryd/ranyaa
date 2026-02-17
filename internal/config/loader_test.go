@@ -34,7 +34,14 @@ func TestLoaderLoad(t *testing.T) {
 
 		// Create a test config file
 		testConfig := `{
-			"anthropic_api_key": "sk-test-key",
+			"ai": {
+				"profiles": [{
+					"id": "test-profile",
+					"provider": "anthropic",
+					"api_key": "sk-ant-test123",
+					"priority": 1
+				}]
+			},
 			"telegram": {
 				"bot_token": "test-token",
 				"dm_policy": "open"
@@ -48,7 +55,8 @@ func TestLoaderLoad(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.NotNil(t, cfg)
-		assert.Equal(t, "sk-test-key", cfg.AnthropicAPIKey)
+		assert.Len(t, cfg.AI.Profiles, 1)
+		assert.Equal(t, "test-profile", cfg.AI.Profiles[0].ID)
 		assert.Equal(t, "test-token", cfg.Telegram.BotToken)
 		assert.Equal(t, "open", cfg.Telegram.DMPolicy)
 	})
@@ -58,7 +66,14 @@ func TestLoaderLoad(t *testing.T) {
 		configPath := filepath.Join(tmpDir, "config.json")
 
 		testConfig := `{
-			"anthropic_api_key": "sk-test-key"
+			"ai": {
+				"profiles": [{
+					"id": "test-profile",
+					"provider": "anthropic",
+					"api_key": "sk-ant-test123",
+					"priority": 1
+				}]
+			}
 		}`
 		err := os.WriteFile(configPath, []byte(testConfig), 0644)
 		require.NoError(t, err)
@@ -92,7 +107,14 @@ func TestLoaderSave(t *testing.T) {
 		configPath := filepath.Join(tmpDir, "config.json")
 
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Telegram.BotToken = "test-token"
 
 		loader := NewLoader(configPath)
@@ -108,7 +130,8 @@ func TestLoaderSave(t *testing.T) {
 		loader2 := NewLoader(configPath)
 		loadedCfg, err := loader2.Load()
 		require.NoError(t, err)
-		assert.Equal(t, "sk-test-key", loadedCfg.AnthropicAPIKey)
+		assert.Len(t, loadedCfg.AI.Profiles, 1)
+		assert.Equal(t, "test-profile", loadedCfg.AI.Profiles[0].ID)
 		assert.Equal(t, "test-token", loadedCfg.Telegram.BotToken)
 	})
 
@@ -117,7 +140,14 @@ func TestLoaderSave(t *testing.T) {
 		configPath := filepath.Join(tmpDir, "subdir", "config.json")
 
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 
 		loader := NewLoader(configPath)
 		err := loader.Save(cfg)

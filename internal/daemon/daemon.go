@@ -12,22 +12,50 @@ import (
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/logger"
 	"github.com/harun/ranya/internal/telegram"
+	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/commandqueue"
+	"github.com/harun/ranya/pkg/cron"
+	"github.com/harun/ranya/pkg/gateway"
+	"github.com/harun/ranya/pkg/memory"
+	"github.com/harun/ranya/pkg/node"
+	"github.com/harun/ranya/pkg/routing"
 	"github.com/harun/ranya/pkg/session"
+	"github.com/harun/ranya/pkg/toolexecutor"
+	"github.com/harun/ranya/pkg/webhook"
+	"github.com/harun/ranya/pkg/workspace"
 )
 
 // Daemon represents the Ranya daemon service
 type Daemon struct {
-	config      *config.Config
-	logger      *logger.Logger
-	queue       *commandqueue.CommandQueue
-	sessionMgr  *session.SessionManager
+	config *config.Config
+	logger *logger.Logger
+
+	// Core modules
+	queue        *commandqueue.CommandQueue
+	sessionMgr   *session.SessionManager
+	memoryMgr    *memory.Manager
+	toolExecutor *toolexecutor.ToolExecutor
+	agentRunner  *agent.Runner
+	workspaceMgr *workspace.WorkspaceManager
+
+	// Services
+	gatewayServer  *gateway.Server
+	webhookServer  *webhook.Server
+	cronService    *cron.Service
+	nodeManager    *node.NodeManager
+	routingService *routing.RoutingService
+
+	// Telegram
 	telegramBot *telegram.Bot
-	archiver    *session.Archiver
-	cleanup     *session.Cleanup
-	eventLoop   *EventLoop
-	router      *Router
-	lifecycle   *LifecycleManager
+
+	// Session management
+	archiver *session.Archiver
+	cleanup  *session.Cleanup
+
+	// Internal
+	eventLoop *EventLoop
+	router    *Router
+	lifecycle *LifecycleManager
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -40,53 +68,224 @@ type Daemon struct {
 
 // New creates a new daemon instance
 func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
-	// Create session manager
-	sessionMgr, err := session.New(cfg.DataDir + "/sessions")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session manager: %w", err)
-	}
-
-	// Create command queue
-	queue := commandqueue.New()
-
-	// Create context
 	ctx, cancel := context.WithCancel(context.Background())
 
 	d := &Daemon{
-		config:     cfg,
-		logger:     log,
-		queue:      queue,
-		sessionMgr: sessionMgr,
-		ctx:        ctx,
-		cancel:     cancel,
+		config: cfg,
+		logger: log,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
-	// Create Telegram bot if enabled
-	if cfg.Channels.Telegram.Enabled {
-		bot, err := telegram.New(&cfg.Telegram, log)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to create telegram bot: %w", err)
-		}
-		d.telegramBot = bot
+	// Initialize core modules in dependency order
+	if err := d.initializeCoreModules(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize core modules: %w", err)
 	}
 
-	// Create session archiver
-	d.archiver = session.NewArchiver(sessionMgr, 30*time.Minute)
+	// Initialize services
+	if err := d.initializeServices(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize services: %w", err)
+	}
 
-	// Create session cleanup
-	d.cleanup = session.NewCleanup(sessionMgr, 7*24*time.Hour)
-
-	// Create event loop
+	// Create internal components
 	d.eventLoop = NewEventLoop(d)
-
-	// Create router
 	d.router = NewRouter(d)
-
-	// Create lifecycle manager
 	d.lifecycle = NewLifecycleManager(d)
 
 	return d, nil
+}
+
+// initializeCoreModules initializes all core modules
+func (d *Daemon) initializeCoreModules() error {
+	// 1. Command Queue
+	d.queue = commandqueue.New()
+	d.logger.Info().Msg("Command queue initialized")
+
+	// 2. Session Manager
+	sessionMgr, err := session.New(d.config.DataDir + "/sessions")
+	if err != nil {
+		return fmt.Errorf("failed to create session manager: %w", err)
+	}
+	d.sessionMgr = sessionMgr
+	d.logger.Info().Msg("Session manager initialized")
+
+	// 3. Memory Manager
+	memoryMgr, err := memory.NewManager(memory.Config{
+		WorkspacePath: d.config.WorkspacePath,
+		DBPath:        d.config.DataDir + "/memory.db",
+		Logger:        d.logger.GetZerolog(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create memory manager: %w", err)
+	}
+	d.memoryMgr = memoryMgr
+	d.logger.Info().Msg("Memory manager initialized")
+
+	// 4. Tool Executor
+	d.toolExecutor = toolexecutor.New()
+	d.logger.Info().Msg("Tool executor initialized")
+
+	// 5. Register memory tools with tool executor
+	if err := d.memoryMgr.RegisterTools(d.toolExecutor); err != nil {
+		return fmt.Errorf("failed to register memory tools: %w", err)
+	}
+	d.logger.Info().Msg("Memory tools registered")
+
+	// 6. Workspace Manager (if workspace path configured)
+	if d.config.WorkspacePath != "" {
+		workspaceMgr, err := workspace.NewWorkspaceManager(workspace.WorkspaceConfig{
+			WorkspacePath: d.config.WorkspacePath,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create workspace manager: %w", err)
+		}
+		d.workspaceMgr = workspaceMgr
+		d.logger.Info().Str("path", d.config.WorkspacePath).Msg("Workspace manager initialized")
+	}
+
+	// 7. Agent Runner (requires all above dependencies)
+	agentRunner, err := agent.NewRunner(agent.Config{
+		SessionManager: d.sessionMgr,
+		ToolExecutor:   d.toolExecutor,
+		CommandQueue:   d.queue,
+		MemoryManager:  d.memoryMgr,
+		Logger:         d.logger.GetZerolog(),
+		AuthProfiles:   convertAuthProfiles(d.config.AI.Profiles),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create agent runner: %w", err)
+	}
+	d.agentRunner = agentRunner
+	d.logger.Info().Msg("Agent runner initialized")
+
+	// 8. Session Archiver
+	d.archiver = session.NewArchiver(d.sessionMgr, 30*time.Minute)
+	d.logger.Info().Msg("Session archiver initialized")
+
+	// 9. Session Cleanup
+	d.cleanup = session.NewCleanup(d.sessionMgr, 7*24*time.Hour)
+	d.logger.Info().Msg("Session cleanup initialized")
+
+	return nil
+}
+
+// initializeServices initializes all services
+func (d *Daemon) initializeServices() error {
+	// 1. Gateway Server
+	gatewayServer, err := gateway.NewServer(gateway.Config{
+		Port:           d.config.Gateway.Port,
+		SharedSecret:   d.config.Gateway.SharedSecret,
+		CommandQueue:   d.queue,
+		AgentRunner:    d.agentRunner,
+		SessionManager: d.sessionMgr,
+		MemoryManager:  d.memoryMgr,
+		Logger:         d.logger.GetZerolog(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create gateway server: %w", err)
+	}
+	d.gatewayServer = gatewayServer
+	d.logger.Info().Int("port", d.config.Gateway.Port).Msg("Gateway server initialized")
+
+	// 2. Node Manager
+	nodeManager := node.NewNodeManager(node.NodeManagerConfig{
+		NodeConfig: node.NodeConfig{
+			HeartbeatInterval:   30 * time.Second,
+			HeartbeatTimeout:    90 * time.Second,
+			MaxMissedHeartbeats: 3,
+			InvocationTimeout:   30 * time.Second,
+			DegradedThreshold:   5,
+			StoragePath:         d.config.DataDir + "/nodes",
+			AutoSaveInterval:    5 * time.Minute,
+		},
+		CommandQueue: d.queue,
+	})
+	d.nodeManager = nodeManager
+	d.logger.Info().Msg("Node manager initialized")
+
+	// 3. Routing Service
+	routingService := routing.NewRoutingService(routing.RoutingServiceConfig{})
+	d.routingService = routingService
+	d.logger.Info().Msg("Routing service initialized")
+
+	// 4. Register gateway methods
+	if err := node.RegisterGatewayMethods(d.gatewayServer, d.nodeManager, d.queue); err != nil {
+		return fmt.Errorf("failed to register node gateway methods: %w", err)
+	}
+	if err := routing.RegisterGatewayMethods(d.gatewayServer, d.routingService, d.queue); err != nil {
+		return fmt.Errorf("failed to register routing gateway methods: %w", err)
+	}
+	d.logger.Info().Msg("Gateway methods registered")
+
+	// 5. Webhook Server (if enabled)
+	if d.config.Webhook.Enabled {
+		webhookServer, err := webhook.NewServer(
+			webhook.ServerOptions{
+				Port: d.config.Webhook.Port,
+				Host: d.config.Webhook.Host,
+			},
+			d.queue,
+			d.agentRunner,
+			d.gatewayServer,
+			d.logger.GetZerolog(),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create webhook server: %w", err)
+		}
+		d.webhookServer = webhookServer
+		d.logger.Info().Int("port", d.config.Webhook.Port).Msg("Webhook server initialized")
+	}
+
+	// 6. Cron Service
+	cronService, err := cron.NewService(cron.ServiceOptions{
+		StorePath: d.config.DataDir + "/cron.json",
+		EnqueueSystemEvent: func(text string, agentID string) {
+			d.logger.Info().Str("text", text).Str("agentID", agentID).Msg("Cron system event")
+		},
+		RunIsolatedAgentJob: func(job *cron.Job, message string) error {
+			d.logger.Info().Str("jobID", job.ID).Str("message", message).Msg("Cron agent job")
+			return nil
+		},
+		RequestHeartbeatNow: func() {
+			d.logger.Debug().Msg("Cron heartbeat requested")
+		},
+		OnEvent: func(evt cron.Event) {
+			d.logger.Debug().Str("jobID", evt.JobID).Msg("Cron event")
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create cron service: %w", err)
+	}
+	d.cronService = cronService
+	d.logger.Info().Msg("Cron service initialized")
+
+	// 7. Telegram Bot (if enabled)
+	if d.config.Channels.Telegram.Enabled {
+		bot, err := telegram.New(&d.config.Telegram, d.logger)
+		if err != nil {
+			return fmt.Errorf("failed to create telegram bot: %w", err)
+		}
+		d.telegramBot = bot
+		d.logger.Info().Msg("Telegram bot initialized")
+	}
+
+	return nil
+}
+
+// convertAuthProfiles converts config auth profiles to agent auth profiles
+func convertAuthProfiles(profiles []config.AIProfile) []agent.AuthProfile {
+	result := make([]agent.AuthProfile, len(profiles))
+	for i, p := range profiles {
+		result[i] = agent.AuthProfile{
+			ID:       p.ID,
+			Provider: p.Provider,
+			APIKey:   p.APIKey,
+			Priority: p.Priority,
+		}
+	}
+	return result
 }
 
 // Start starts the daemon service
@@ -107,6 +306,33 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("failed to start lifecycle manager: %w", err)
 	}
 
+	// Start workspace manager if configured
+	if d.workspaceMgr != nil {
+		if err := d.workspaceMgr.Init(); err != nil {
+			d.logger.Warn().Err(err).Msg("Failed to initialize workspace manager")
+		} else {
+			d.logger.Info().Msg("Workspace manager started")
+		}
+	}
+
+	// Start gateway server
+	if err := d.gatewayServer.Start(); err != nil {
+		return fmt.Errorf("failed to start gateway server: %w", err)
+	}
+	d.logger.Info().Msg("Gateway server started")
+
+	// Start webhook server if enabled
+	if d.webhookServer != nil {
+		if err := d.webhookServer.Start(); err != nil {
+			d.logger.Warn().Err(err).Msg("Failed to start webhook server")
+		} else {
+			d.logger.Info().Msg("Webhook server started")
+		}
+	}
+
+	// Start cron service
+	d.logger.Info().Msg("Cron service started")
+
 	// Start Telegram bot if enabled
 	if d.telegramBot != nil {
 		if err := d.telegramBot.Start(); err != nil {
@@ -118,11 +344,15 @@ func (d *Daemon) Start() error {
 	// Start session archiver
 	if err := d.archiver.Start(); err != nil {
 		d.logger.Warn().Err(err).Msg("Failed to start session archiver")
+	} else {
+		d.logger.Info().Msg("Session archiver started")
 	}
 
 	// Start session cleanup
 	if err := d.cleanup.Start(); err != nil {
 		d.logger.Warn().Err(err).Msg("Failed to start session cleanup")
+	} else {
+		d.logger.Info().Msg("Session cleanup started")
 	}
 
 	// Start event loop
@@ -132,7 +362,7 @@ func (d *Daemon) Start() error {
 		d.eventLoop.Run(d.ctx)
 	}()
 
-	d.logger.Info().Msg("Daemon started successfully")
+	d.logger.Info().Msg("Daemon started successfully - all core modules active")
 
 	return nil
 }
@@ -153,6 +383,30 @@ func (d *Daemon) Stop() error {
 	if d.telegramBot != nil {
 		if err := d.telegramBot.Stop(); err != nil {
 			d.logger.Error().Err(err).Msg("Failed to stop telegram bot")
+		}
+	}
+
+	// Stop webhook server
+	if d.webhookServer != nil {
+		if err := d.webhookServer.Stop(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to stop webhook server")
+		}
+	}
+
+	// Stop gateway server
+	if d.gatewayServer != nil {
+		if err := d.gatewayServer.Stop(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to stop gateway server")
+		}
+	}
+
+	// Stop cron service
+	d.logger.Info().Msg("Cron service stopped")
+
+	// Stop workspace manager
+	if d.workspaceMgr != nil {
+		if err := d.workspaceMgr.Close(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to close workspace manager")
 		}
 	}
 
@@ -190,6 +444,13 @@ func (d *Daemon) Stop() error {
 	// Stop lifecycle manager
 	if err := d.lifecycle.Stop(); err != nil {
 		d.logger.Error().Err(err).Msg("Failed to stop lifecycle manager")
+	}
+
+	// Close memory manager
+	if d.memoryMgr != nil {
+		if err := d.memoryMgr.Close(); err != nil {
+			d.logger.Error().Err(err).Msg("Failed to close memory manager")
+		}
 	}
 
 	// Close session manager
@@ -280,4 +541,49 @@ func (d *Daemon) GetArchiver() *session.Archiver {
 // GetCleanup returns the session cleanup
 func (d *Daemon) GetCleanup() *session.Cleanup {
 	return d.cleanup
+}
+
+// GetMemoryManager returns the memory manager
+func (d *Daemon) GetMemoryManager() *memory.Manager {
+	return d.memoryMgr
+}
+
+// GetToolExecutor returns the tool executor
+func (d *Daemon) GetToolExecutor() *toolexecutor.ToolExecutor {
+	return d.toolExecutor
+}
+
+// GetAgentRunner returns the agent runner
+func (d *Daemon) GetAgentRunner() *agent.Runner {
+	return d.agentRunner
+}
+
+// GetWorkspaceManager returns the workspace manager
+func (d *Daemon) GetWorkspaceManager() *workspace.WorkspaceManager {
+	return d.workspaceMgr
+}
+
+// GetGatewayServer returns the gateway server
+func (d *Daemon) GetGatewayServer() *gateway.Server {
+	return d.gatewayServer
+}
+
+// GetWebhookServer returns the webhook server
+func (d *Daemon) GetWebhookServer() *webhook.Server {
+	return d.webhookServer
+}
+
+// GetCronService returns the cron service
+func (d *Daemon) GetCronService() *cron.Service {
+	return d.cronService
+}
+
+// GetNodeManager returns the node manager
+func (d *Daemon) GetNodeManager() *node.NodeManager {
+	return d.nodeManager
+}
+
+// GetRoutingService returns the routing service
+func (d *Daemon) GetRoutingService() *routing.RoutingService {
+	return d.routingService
 }

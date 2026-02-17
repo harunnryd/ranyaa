@@ -15,7 +15,6 @@ type ProfileContext struct {
 	profile        *ResolvedBrowserProfile
 	processManager *ProcessManager
 	session        *SessionManager
-	pool           *PagePool
 	security       *SecurityValidator
 	commandQueue   interface{} // Reference to command queue (will be set during integration)
 	mu             sync.RWMutex
@@ -79,10 +78,6 @@ func (pc *ProfileContext) EnsureBrowserAvailable(ctx context.Context) error {
 	// Create session manager
 	pc.session = NewSessionManager(browser, pc.profile)
 
-	// Create page pool
-	idleTimeout := 300 * time.Second // 5 minutes default
-	pc.pool = NewPagePool(pc.session, 10, idleTimeout)
-
 	pc.isAvailable = true
 
 	return nil
@@ -95,12 +90,6 @@ func (pc *ProfileContext) StopRunningBrowser() error {
 
 	if !pc.isAvailable {
 		return nil
-	}
-
-	// Close pool
-	if pc.pool != nil {
-		pc.pool.Close()
-		pc.pool = nil
 	}
 
 	// Close session

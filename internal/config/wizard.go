@@ -28,8 +28,11 @@ func (w *Wizard) Run() (*Config, error) {
 	validator := NewValidator()
 
 	// API Keys
-	fmt.Println("API Keys (at least one is required):")
+	fmt.Println("AI Provider Configuration (at least one is required):")
 	fmt.Println()
+
+	var profiles []AIProfile
+	priority := 1
 
 	// Anthropic API Key
 	for {
@@ -48,7 +51,13 @@ func (w *Wizard) Run() (*Config, error) {
 			continue
 		}
 
-		cfg.AnthropicAPIKey = key
+		profiles = append(profiles, AIProfile{
+			ID:       "anthropic-default",
+			Provider: "anthropic",
+			APIKey:   key,
+			Priority: priority,
+		})
+		priority++
 		break
 	}
 
@@ -69,14 +78,21 @@ func (w *Wizard) Run() (*Config, error) {
 			continue
 		}
 
-		cfg.OpenAIAPIKey = key
+		profiles = append(profiles, AIProfile{
+			ID:       "openai-default",
+			Provider: "openai",
+			APIKey:   key,
+			Priority: priority,
+		})
 		break
 	}
 
-	// Check if at least one API key is provided
-	if cfg.AnthropicAPIKey == "" && cfg.OpenAIAPIKey == "" {
-		return nil, fmt.Errorf("at least one API key is required")
+	// Check if at least one profile is provided
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("at least one AI provider is required")
 	}
+
+	cfg.AI.Profiles = profiles
 
 	fmt.Println()
 

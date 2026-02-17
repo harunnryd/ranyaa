@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -16,8 +17,23 @@ func createTestDaemon(t *testing.T) (*Daemon, *logger.Logger) {
 
 	cfg := config.DefaultConfig()
 	cfg.DataDir = tmpDir
-	cfg.AnthropicAPIKey = "sk-test-key"
-	cfg.Channels.Telegram.Enabled = false // Disable Telegram for tests
+	cfg.WorkspacePath = tmpDir + "/workspace" // Add workspace path for memory manager
+	cfg.Channels.Telegram.Enabled = false     // Disable Telegram for tests
+	cfg.Gateway.SharedSecret = "test-secret"  // Add gateway shared secret for tests
+
+	// Add at least one AI profile for agent runner
+	cfg.AI.Profiles = []config.AIProfile{
+		{
+			ID:       "test-profile",
+			Provider: "anthropic",
+			APIKey:   "sk-ant-test123",
+			Priority: 1,
+		},
+	}
+
+	// Create workspace directory
+	err := os.MkdirAll(cfg.WorkspacePath, 0755)
+	require.NoError(t, err)
 
 	logCfg := logger.Config{
 		Level:   "info",

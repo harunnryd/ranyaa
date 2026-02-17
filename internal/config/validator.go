@@ -141,15 +141,14 @@ func (v *Validator) ValidateDMPolicy(policy string) error {
 func (v *Validator) ValidateConfig(cfg *Config) []error {
 	var errors []error
 
-	// Validate API keys
-	if cfg.AnthropicAPIKey != "" {
-		if err := v.ValidateAPIKey(cfg.AnthropicAPIKey, "anthropic"); err != nil {
-			errors = append(errors, err)
-		}
-	}
-	if cfg.OpenAIAPIKey != "" {
-		if err := v.ValidateAPIKey(cfg.OpenAIAPIKey, "openai"); err != nil {
-			errors = append(errors, err)
+	// Validate AI profiles (canonical source)
+	if len(cfg.AI.Profiles) > 0 {
+		for i, profile := range cfg.AI.Profiles {
+			if profile.Provider != "" {
+				if err := v.ValidateAPIKey(profile.APIKey, profile.Provider); err != nil {
+					errors = append(errors, fmt.Errorf("AI profile %d (%s): %w", i, profile.ID, err))
+				}
+			}
 		}
 	}
 

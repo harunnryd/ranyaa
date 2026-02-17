@@ -21,7 +21,14 @@ func TestDefaultConfig(t *testing.T) {
 func TestConfigValidate(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Channels.Telegram.Enabled = false // Disable Telegram for this test
 
 		err := cfg.Validate()
@@ -30,17 +37,23 @@ func TestConfigValidate(t *testing.T) {
 
 	t.Run("missing API keys", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = ""
-		cfg.OpenAIAPIKey = ""
+		cfg.AI.Profiles = []AIProfile{}
 
 		err := cfg.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "API key")
+		assert.Contains(t, err.Error(), "no AI credentials")
 	})
 
 	t.Run("missing agents", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Agents = []AgentConfig{}
 
 		err := cfg.Validate()
@@ -50,7 +63,14 @@ func TestConfigValidate(t *testing.T) {
 
 	t.Run("agent missing ID", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Agents[0].ID = ""
 
 		err := cfg.Validate()
@@ -60,7 +80,14 @@ func TestConfigValidate(t *testing.T) {
 
 	t.Run("agent missing model", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Agents[0].Model = ""
 
 		err := cfg.Validate()
@@ -70,7 +97,14 @@ func TestConfigValidate(t *testing.T) {
 
 	t.Run("invalid agent role", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Agents[0].Role = "invalid"
 
 		err := cfg.Validate()
@@ -80,7 +114,14 @@ func TestConfigValidate(t *testing.T) {
 
 	t.Run("telegram enabled without token", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Channels.Telegram.Enabled = true
 		cfg.Telegram.BotToken = ""
 
@@ -91,7 +132,14 @@ func TestConfigValidate(t *testing.T) {
 
 	t.Run("invalid DM policy", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-test-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 		cfg.Channels.Telegram.Enabled = true
 		cfg.Telegram.BotToken = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 		cfg.Telegram.DMPolicy = "invalid"
@@ -104,9 +152,16 @@ func TestConfigValidate(t *testing.T) {
 
 func TestConfigString(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.AnthropicAPIKey = "sk-test-key"
+	cfg.AI.Profiles = []AIProfile{
+		{
+			ID:       "test-profile",
+			Provider: "anthropic",
+			APIKey:   "sk-ant-test123",
+			Priority: 1,
+		},
+	}
 
 	str := cfg.String()
 	assert.NotEmpty(t, str)
-	assert.Contains(t, str, "anthropic_api_key")
+	assert.Contains(t, str, "profiles")
 }

@@ -7,10 +7,6 @@ import (
 
 // Config represents the main Ranya configuration
 type Config struct {
-	// API Keys
-	AnthropicAPIKey string `json:"anthropic_api_key" mapstructure:"anthropic_api_key"`
-	OpenAIAPIKey    string `json:"openai_api_key" mapstructure:"openai_api_key"`
-
 	// Telegram
 	Telegram TelegramConfig `json:"telegram" mapstructure:"telegram"`
 
@@ -31,6 +27,18 @@ type Config struct {
 
 	// Data directory
 	DataDir string `json:"data_dir" mapstructure:"data_dir"`
+
+	// Workspace path
+	WorkspacePath string `json:"workspace_path" mapstructure:"workspace_path"`
+
+	// Gateway configuration
+	Gateway GatewayConfig `json:"gateway" mapstructure:"gateway"`
+
+	// Webhook configuration
+	Webhook WebhookConfig `json:"webhook" mapstructure:"webhook"`
+
+	// AI configuration
+	AI AIConfig `json:"ai" mapstructure:"ai"`
 }
 
 // TelegramConfig holds Telegram bot configuration
@@ -106,6 +114,34 @@ type LoggingConfig struct {
 	Redaction bool   `json:"redaction" mapstructure:"redaction"`
 }
 
+// GatewayConfig holds gateway server configuration
+type GatewayConfig struct {
+	Port         int    `json:"port" mapstructure:"port"`
+	Host         string `json:"host" mapstructure:"host"`
+	SharedSecret string `json:"shared_secret" mapstructure:"shared_secret"`
+}
+
+// WebhookConfig holds webhook server configuration
+type WebhookConfig struct {
+	Enabled bool   `json:"enabled" mapstructure:"enabled"`
+	Port    int    `json:"port" mapstructure:"port"`
+	Host    string `json:"host" mapstructure:"host"`
+	Timeout int    `json:"timeout" mapstructure:"timeout"` // seconds
+}
+
+// AIConfig holds AI provider configuration
+type AIConfig struct {
+	Profiles []AIProfile `json:"profiles" mapstructure:"profiles"`
+}
+
+// AIProfile represents an AI provider profile
+type AIProfile struct {
+	ID       string `json:"id" mapstructure:"id"`
+	Provider string `json:"provider" mapstructure:"provider"` // anthropic, openai, gemini
+	APIKey   string `json:"api_key" mapstructure:"api_key"`
+	Priority int    `json:"priority" mapstructure:"priority"`
+}
+
 // DefaultConfig returns a config with default values
 func DefaultConfig() *Config {
 	return &Config{
@@ -137,6 +173,22 @@ func DefaultConfig() *Config {
 			Compress:  true,
 			Redaction: true,
 		},
+		Gateway: GatewayConfig{
+			Port:         8080,
+			Host:         "0.0.0.0",
+			SharedSecret: "",
+		},
+		Webhook: WebhookConfig{
+			Enabled: false,
+			Port:    3000,
+			Host:    "0.0.0.0",
+			Timeout: 30,
+		},
+		AI: AIConfig{
+			Profiles: []AIProfile{},
+		},
+		DataDir:       "",
+		WorkspacePath: "",
 		Agents: []AgentConfig{
 			{
 				ID:          "default",
@@ -167,9 +219,33 @@ func (c *Config) String() string {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	// Check required fields
-	if c.AnthropicAPIKey == "" && c.OpenAIAPIKey == "" {
-		return fmt.Errorf("at least one API key (Anthropic or OpenAI) is required")
+	// Require at least one AI profile
+	if len(c.AI.Profiles) == 0 {
+		return fmt.Errorf("no AI credentials configured: at least one AI profile is required")
+	}
+
+	// Validate AI profiles
+	for i, profile := range c.AI.Profiles {
+		if profile.ID == "" {
+			return fmt.Errorf("AI profile %d: ID is required", i)
+		}
+		if profile.Provider == "" {
+			return fmt.Errorf("AI profile %s: provider is required", profile.ID)
+		}
+		if profile.APIKey == "" {
+			return fmt.Errorf("AI profile %s: api_key is required", profile.ID)
+		}
+		validProviders := []string{"anthropic", "openai", "gemini"}
+		valid := false
+		for _, vp := range validProviders {
+			if profile.Provider == vp {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("AI profile %s: invalid provider %s (must be: anthropic, openai, gemini)", profile.ID, profile.Provider)
+		}
 	}
 
 	// Validate agents

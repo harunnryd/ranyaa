@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/harun/ranya/pkg/toolexecutor"
 )
 
 // MemorySearchParams defines parameters for memory_search tool
@@ -235,4 +237,152 @@ func MemoryList(ctx context.Context, workspacePath string, params MemoryListPara
 		Files: files,
 		Count: len(files),
 	}, nil
+}
+
+// RegisterTools registers memory tools with the tool executor
+func (m *Manager) RegisterTools(executor ToolExecutor) error {
+	// Register memory_search tool
+	if err := executor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "memory_search",
+		Description: "Search memory files by query using semantic and keyword search",
+		Parameters: []toolexecutor.ToolParameter{
+			{
+				Name:        "query",
+				Type:        "string",
+				Description: "Search query",
+				Required:    true,
+			},
+			{
+				Name:        "limit",
+				Type:        "integer",
+				Description: "Maximum number of results (default: 20)",
+				Required:    false,
+				Default:     20,
+			},
+			{
+				Name:        "vector_weight",
+				Type:        "number",
+				Description: "Weight for vector search (default: 0.7)",
+				Required:    false,
+				Default:     0.7,
+			},
+			{
+				Name:        "keyword_weight",
+				Type:        "number",
+				Description: "Weight for keyword search (default: 0.3)",
+				Required:    false,
+				Default:     0.3,
+			},
+			{
+				Name:        "min_score",
+				Type:        "number",
+				Description: "Minimum relevance score (default: 0)",
+				Required:    false,
+				Default:     0.0,
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			// Parse parameters
+			var searchParams MemorySearchParams
+			if query, ok := params["query"].(string); ok {
+				searchParams.Query = query
+			}
+			if limit, ok := params["limit"].(float64); ok {
+				searchParams.Limit = int(limit)
+			}
+			if vw, ok := params["vector_weight"].(float64); ok {
+				searchParams.VectorWeight = vw
+			}
+			if kw, ok := params["keyword_weight"].(float64); ok {
+				searchParams.KeywordWeight = kw
+			}
+			if ms, ok := params["min_score"].(float64); ok {
+				searchParams.MinScore = ms
+			}
+			return MemorySearch(ctx, m, searchParams)
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to register memory_search tool: %w", err)
+	}
+
+	// Register memory_write tool
+	if err := executor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "memory_write",
+		Description: "Create or update a memory file",
+		Parameters: []toolexecutor.ToolParameter{
+			{
+				Name:        "path",
+				Type:        "string",
+				Description: "Relative path to the file (must end with .md)",
+				Required:    true,
+			},
+			{
+				Name:        "content",
+				Type:        "string",
+				Description: "File content",
+				Required:    true,
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			var writeParams MemoryWriteParams
+			if path, ok := params["path"].(string); ok {
+				writeParams.Path = path
+			}
+			if content, ok := params["content"].(string); ok {
+				writeParams.Content = content
+			}
+			return MemoryWrite(ctx, m, m.workspacePath, writeParams)
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to register memory_write tool: %w", err)
+	}
+
+	// Register memory_delete tool
+	if err := executor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "memory_delete",
+		Description: "Delete a memory file",
+		Parameters: []toolexecutor.ToolParameter{
+			{
+				Name:        "path",
+				Type:        "string",
+				Description: "Relative path to the file",
+				Required:    true,
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			var deleteParams MemoryDeleteParams
+			if path, ok := params["path"].(string); ok {
+				deleteParams.Path = path
+			}
+			return MemoryDelete(ctx, m, m.workspacePath, deleteParams)
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to register memory_delete tool: %w", err)
+	}
+
+	// Register memory_list tool
+	if err := executor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "memory_list",
+		Description: "List all memory files",
+		Parameters: []toolexecutor.ToolParameter{
+			{
+				Name:        "pattern",
+				Type:        "string",
+				Description: "Optional glob pattern to filter files",
+				Required:    false,
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			var listParams MemoryListParams
+			if pattern, ok := params["pattern"].(string); ok {
+				listParams.Pattern = pattern
+			}
+			return MemoryList(ctx, m.workspacePath, listParams)
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to register memory_list tool: %w", err)
+	}
+
+	m.logger.Info().Msg("Memory tools registered")
+	return nil
 }

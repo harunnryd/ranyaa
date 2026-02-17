@@ -4,43 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/harun/ranya/pkg/toolexecutor"
 )
 
 // ToolExecutor interface for registering tools
 // This avoids circular dependency with pkg/toolexecutor
 type ToolExecutor interface {
-	RegisterTool(def ToolDefinition) error
+	RegisterTool(def toolexecutor.ToolDefinition) error
 }
-
-// ToolDefinition defines a tool's metadata and handler
-type ToolDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Category    string          `json:"category"`
-	Parameters  []ToolParameter `json:"parameters"`
-	Handler     ToolHandler     `json:"-"`
-}
-
-// ToolParameter defines a parameter for a tool
-type ToolParameter struct {
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Description string      `json:"description"`
-	Required    bool        `json:"required"`
-	Default     interface{} `json:"default,omitempty"`
-}
-
-// ToolHandler is the function signature for tool execution
-type ToolHandler func(ctx context.Context, params map[string]interface{}) (interface{}, error)
 
 // RegisterMemoryTools registers all memory tools with the tool executor
 func RegisterMemoryTools(executor ToolExecutor, manager *Manager, workspacePath string) error {
-	tools := []ToolDefinition{
+	tools := []toolexecutor.ToolDefinition{
 		{
 			Name:        "memory_search",
 			Description: "Search memory files by query using hybrid vector and keyword search",
-			Category:    "read",
-			Parameters: []ToolParameter{
+			Parameters: []toolexecutor.ToolParameter{
 				{
 					Name:        "query",
 					Type:        "string",
@@ -93,8 +73,7 @@ func RegisterMemoryTools(executor ToolExecutor, manager *Manager, workspacePath 
 		{
 			Name:        "memory_write",
 			Description: "Create or update a memory file",
-			Category:    "write",
-			Parameters: []ToolParameter{
+			Parameters: []toolexecutor.ToolParameter{
 				{
 					Name:        "path",
 					Type:        "string",
@@ -124,8 +103,7 @@ func RegisterMemoryTools(executor ToolExecutor, manager *Manager, workspacePath 
 		{
 			Name:        "memory_delete",
 			Description: "Delete a memory file",
-			Category:    "write",
-			Parameters: []ToolParameter{
+			Parameters: []toolexecutor.ToolParameter{
 				{
 					Name:        "path",
 					Type:        "string",
@@ -149,8 +127,7 @@ func RegisterMemoryTools(executor ToolExecutor, manager *Manager, workspacePath 
 		{
 			Name:        "memory_list",
 			Description: "List all memory files with metadata",
-			Category:    "read",
-			Parameters: []ToolParameter{
+			Parameters: []toolexecutor.ToolParameter{
 				{
 					Name:        "pattern",
 					Type:        "string",

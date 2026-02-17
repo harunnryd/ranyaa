@@ -182,7 +182,14 @@ func TestValidateConfig(t *testing.T) {
 
 	t.Run("valid config", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "sk-ant-test123"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
 
 		errors := v.ValidateConfig(cfg)
 		assert.Empty(t, errors)
@@ -190,7 +197,14 @@ func TestValidateConfig(t *testing.T) {
 
 	t.Run("multiple errors", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.AnthropicAPIKey = "invalid-key"
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "invalid-key",
+				Priority: 1,
+			},
+		}
 		cfg.Telegram.DMPolicy = "invalid"
 		cfg.Logging.Level = "invalid"
 

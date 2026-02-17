@@ -103,9 +103,7 @@ func (l *Loader) Save(cfg *Config) error {
 	v.SetConfigFile(configPath)
 	v.SetConfigType("json")
 
-	// Set all config values
-	v.Set("anthropic_api_key", cfg.AnthropicAPIKey)
-	v.Set("openai_api_key", cfg.OpenAIAPIKey)
+	// Set all config values (use canonical fields only)
 	v.Set("telegram", cfg.Telegram)
 	v.Set("agents", cfg.Agents)
 	v.Set("models", cfg.Models)
@@ -113,6 +111,10 @@ func (l *Loader) Save(cfg *Config) error {
 	v.Set("tools", cfg.Tools)
 	v.Set("logging", cfg.Logging)
 	v.Set("data_dir", cfg.DataDir)
+	v.Set("workspace_path", cfg.WorkspacePath)
+	v.Set("gateway", cfg.Gateway)
+	v.Set("webhook", cfg.Webhook)
+	v.Set("ai", cfg.AI)
 
 	// Write config file
 	if err := v.WriteConfig(); err != nil {
@@ -140,4 +142,10 @@ func (l *Loader) GetConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".ranya", "ranya.json")
+}
+
+// Load is a convenience function that creates a loader and loads the config
+func Load(configPath string) (*Config, error) {
+	loader := NewLoader(configPath)
+	return loader.Load()
 }

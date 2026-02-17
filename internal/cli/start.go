@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"syscall"
 
+	"github.com/harun/ranya/internal/config"
+	"github.com/harun/ranya/internal/daemon"
+	"github.com/harun/ranya/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -27,13 +32,77 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("daemon is already running (PID file: %s)", pidFile)
 	}
 
-	// TODO: This will be implemented when daemon service is ready (Phase B)
-	// For now, we just create a placeholder
-	fmt.Println("Starting Ranya daemon...")
-	fmt.Printf("Config: %s\n", cfgFile)
-	fmt.Printf("Log level: %s\n", logLevel)
+	// Load configuration
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
 
-	return fmt.Errorf("daemon service not yet implemented (Phase B)")
+	// Create logger
+	log, err := logger.New(logger.Config{
+		Level:   logLevel,
+		File:    cfg.Logging.File,
+		Console: false, // Daemon mode - no console output
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
+	// Create daemon
+	d, err := daemon.New(cfg, log)
+	if err != nil {
+		return fmt.Errorf("failed to create daemon: %w", err)
+	}
+
+	// Fork to background
+	if err := daemonize(pidFile); err != nil {
+		return fmt.Errorf("failed to daemonize: %w", err)
+	}
+
+	// Start daemon
+	if err := d.Start(); err != nil {
+		return fmt.Errorf("failed to start daemon: %w", err)
+	}
+
+	// Wait for shutdown signal
+	d.Wait()
+
+	// Remove PID file
+	os.Remove(pidFile)
+
+	return nil
+}
+
+func daemonize(pidFile string) error {
+	// Check if we're already the child process
+	if os.Getenv("RANYA_DAEMON_CHILD") == "1" {
+		// We're the child, write PID file
+		pid := os.Getpid()
+		pidDir := filepath.Dir(pidFile)
+		if err := os.MkdirAll(pidDir, 0755); err != nil {
+			return fmt.Errorf("failed to create PID directory: %w", err)
+		}
+		if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
+			return fmt.Errorf("failed to write PID file: %w", err)
+		}
+		return nil
+	}
+
+	// Fork the process
+	env := append(os.Environ(), "RANYA_DAEMON_CHILD=1")
+	procAttr := &os.ProcAttr{
+		Env:   env,
+		Files: []*os.File{nil, nil, nil}, // Detach from stdin/stdout/stderr
+	}
+
+	process, err := os.StartProcess(os.Args[0], os.Args, procAttr)
+	if err != nil {
+		return fmt.Errorf("failed to fork process: %w", err)
+	}
+
+	fmt.Printf("Ranya daemon started (PID: %d)\n", process.Pid)
+	os.Exit(0)
+	return nil
 }
 
 func getPIDFilePath() string {
@@ -61,13 +130,39 @@ func isRunning(pidFile string) bool {
 		return false
 	}
 
-	// Check if process exists
+	// Check if process exists by sending signal 0
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return false
 	}
 
-	// On Unix, FindProcess always succeeds, so we need to send signal 0
-	err = process.Signal(os.Signal(nil))
+	err = process.Signal(syscall.Signal(0))
 	return err == nil
+}
+
+func stopDaemon(pidFile string) error {
+	if !isRunning(pidFile) {
+		return fmt.Errorf("daemon is not running")
+	}
+
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return fmt.Errorf("failed to read PID file: %w", err)
+	}
+
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		return fmt.Errorf("invalid PID in file: %w", err)
+	}
+
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process: %w", err)
+	}
+
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("failed to send SIGTERM: %w", err)
+	}
+
+	return nil
 }
