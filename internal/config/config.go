@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Config represents the main Ranya configuration
@@ -61,6 +62,7 @@ type AgentConfig struct {
 	Workspace              string           `json:"workspace" mapstructure:"workspace"`
 	Sandbox                SandboxConfig    `json:"sandbox" mapstructure:"sandbox"`
 	MaxConcurrentSubAgents int              `json:"max_concurrent_sub_agents" mapstructure:"max_concurrent_sub_agents"`
+	AllowedSubAgents       []string         `json:"allowed_sub_agents" mapstructure:"allowed_sub_agents"`
 }
 
 // ToolPolicyConfig defines tool access policies
@@ -206,6 +208,7 @@ func DefaultConfig() *Config {
 					Scope: "agent",
 				},
 				MaxConcurrentSubAgents: 5,
+				AllowedSubAgents:       []string{"*"},
 			},
 		},
 	}
@@ -262,6 +265,11 @@ func (c *Config) Validate() error {
 		}
 		if agent.Role != "" && agent.Role != "captain" && agent.Role != "executor" && agent.Role != "critic" && agent.Role != "general" {
 			return fmt.Errorf("agent %s: invalid role %s", agent.ID, agent.Role)
+		}
+		for idx, subAgentID := range agent.AllowedSubAgents {
+			if strings.TrimSpace(subAgentID) == "" {
+				return fmt.Errorf("agent %s: allowed_sub_agents[%d] cannot be empty", agent.ID, idx)
+			}
 		}
 	}
 

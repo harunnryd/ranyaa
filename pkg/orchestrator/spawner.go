@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,6 +49,10 @@ func (s *Spawner) Spawn(ctx context.Context, req SpawnRequest) (AgentResult, err
 
 	if req.Context.Instructions == "" {
 		return AgentResult{}, fmt.Errorf("instructions are required")
+	}
+
+	if err := s.validateSpawnPolicy(req); err != nil {
+		return AgentResult{}, err
 	}
 
 	// Set default timeout if not specified
@@ -173,4 +178,22 @@ func (s *Spawner) generateChildSessionKey(parentSessionKey, instanceID string) s
 		return fmt.Sprintf("sub:%s", instanceID)
 	}
 	return fmt.Sprintf("%s:sub:%s", parentSessionKey, instanceID)
+}
+
+func (s *Spawner) validateSpawnPolicy(req SpawnRequest) error {
+	parentAgentID := strings.TrimSpace(req.ParentAgentID)
+	if parentAgentID == "" {
+		return nil
+	}
+
+	parentConfig, err := s.orchestrator.GetAgent(parentAgentID)
+	if err != nil {
+		return fmt.Errorf("failed to get parent agent config: %w", err)
+	}
+
+	if !parentConfig.IsSubAgentAllowed(req.AgentID) {
+		return fmt.Errorf("parent agent '%s' is not allowed to spawn sub-agent '%s'", parentAgentID, req.AgentID)
+	}
+
+	return nil
 }

@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,16 @@ type RoutingService struct {
 	started            bool
 	mu                 sync.RWMutex
 }
+
+const (
+	bindingRankUnspecified  = 100
+	bindingRankChannel      = 200
+	bindingRankAccountAny   = 250
+	bindingRankAccountExact = 300
+	bindingRankTeam         = 400
+	bindingRankGuild        = 500
+	bindingRankPeer         = 600
+)
 
 // RoutingServiceConfig holds configuration for RoutingService
 type RoutingServiceConfig struct {
@@ -271,81 +282,7 @@ func (rs *RoutingService) Route(ctx RoutingContext, message interface{}) (*Routi
 		}, nil
 	}
 
-	// Evaluate patterns and conditions for all enabled routes
-	eligibleRoutes := make([]*Route, 0)
-
-	for _, route := range enabledRoutes {
-		// Create message from context for pattern matching
-		msg := &Message{
-			ID:        ctx.MessageID,
-			Content:   ctx.Content,
-			Metadata:  ctx.Metadata,
-			Timestamp: ctx.Timestamp.Unix(),
-		}
-
-		// Check pattern match
-		matched := false
-		for i := range route.Patterns {
-			if rs.patternMatcher.Match(&route.Patterns[i], msg) {
-				matched = true
-				break
-			}
-		}
-
-		if !matched {
-			continue
-		}
-
-		// Record match
-		rs.statisticsTracker.RecordMatch(route.ID, route.Name)
-
-		// Check conditions
-		if len(route.Conditions) > 0 {
-			allConditionsMet := true
-			for i := range route.Conditions {
-				// Convert RouteCondition to map for evaluator
-				condMap := make(map[string]interface{})
-				condMap["type"] = route.Conditions[i].Type
-				if route.Conditions[i].TimeRange != nil {
-					condMap["timeRange"] = route.Conditions[i].TimeRange
-				}
-				if route.Conditions[i].ContentMatch != nil {
-					condMap["contentMatch"] = route.Conditions[i].ContentMatch
-				}
-				if route.Conditions[i].MetadataMatch != nil {
-					condMap["metadataMatch"] = route.Conditions[i].MetadataMatch
-				}
-				if route.Conditions[i].CustomFunction != "" {
-					condMap["customFunction"] = route.Conditions[i].CustomFunction
-				}
-
-				if !rs.conditionEvaluator.Evaluate(condMap, &ctx) {
-					allConditionsMet = false
-					break
-				}
-			}
-
-			if !allConditionsMet {
-				continue
-			}
-		}
-
-		eligibleRoutes = append(eligibleRoutes, route)
-	}
-
-	if len(eligibleRoutes) == 0 {
-		// No matching routes, use default fallback
-		result := rs.handleDefaultFallback(ctx, message, startTime)
-		return result, nil
-	}
-
-	// Select highest priority route using priority queue
-	rs.priorityQueue.Clear()
-	for _, route := range eligibleRoutes {
-		rs.priorityQueue.Enqueue(route)
-	}
-
-	selectedRoute := rs.priorityQueue.Dequeue()
+	selectedRoute := rs.resolveRoute(ctx, enabledRoutes)
 	if selectedRoute == nil {
 		result := rs.handleDefaultFallback(ctx, message, startTime)
 		return result, nil
@@ -358,6 +295,7 @@ func (rs *RoutingService) Route(ctx RoutingContext, message interface{}) (*Routi
 		Timestamp: time.Now(),
 		Data: map[string]interface{}{
 			"priority": selectedRoute.Priority,
+			"binding":  selectedRoute.Metadata,
 		},
 	})
 
@@ -365,6 +303,314 @@ func (rs *RoutingService) Route(ctx RoutingContext, message interface{}) (*Routi
 	result := rs.deliverWithFallback(ctx, message, selectedRoute, 0, startTime)
 
 	return result, nil
+}
+
+// ResolveRoute returns the route selected by pattern/condition matching and binding precedence.
+// It does not invoke route handlers.
+func (rs *RoutingService) ResolveRoute(ctx RoutingContext) (*Route, error) {
+	enabledRoutes := rs.routeManager.GetEnabledRoutes()
+	if len(enabledRoutes) == 0 {
+		return nil, nil
+	}
+
+	return rs.resolveRoute(ctx, enabledRoutes), nil
+}
+
+func (rs *RoutingService) resolveRoute(ctx RoutingContext, enabledRoutes []*Route) *Route {
+	eligibleRoutes := rs.collectEligibleRoutes(ctx, enabledRoutes)
+	if len(eligibleRoutes) == 0 {
+		return nil
+	}
+
+	bestBindingRank := -1
+	rankedRoutes := make([]*Route, 0, len(eligibleRoutes))
+	for _, route := range eligibleRoutes {
+		rank, matched := bindingPrecedenceScore(route, ctx)
+		if !matched {
+			continue
+		}
+		if rank > bestBindingRank {
+			bestBindingRank = rank
+			rankedRoutes = rankedRoutes[:0]
+			rankedRoutes = append(rankedRoutes, route)
+			continue
+		}
+		if rank == bestBindingRank {
+			rankedRoutes = append(rankedRoutes, route)
+		}
+	}
+
+	if len(rankedRoutes) == 0 {
+		return nil
+	}
+
+	rs.priorityQueue.Clear()
+	for _, route := range rankedRoutes {
+		rs.priorityQueue.Enqueue(route)
+	}
+
+	return rs.priorityQueue.Dequeue()
+}
+
+func (rs *RoutingService) collectEligibleRoutes(ctx RoutingContext, enabledRoutes []*Route) []*Route {
+	eligibleRoutes := make([]*Route, 0, len(enabledRoutes))
+	for _, route := range enabledRoutes {
+		if rs.isRouteEligible(route, ctx) {
+			eligibleRoutes = append(eligibleRoutes, route)
+		}
+	}
+	return eligibleRoutes
+}
+
+func (rs *RoutingService) isRouteEligible(route *Route, ctx RoutingContext) bool {
+	msg := &Message{
+		ID:        ctx.MessageID,
+		Content:   ctx.Content,
+		Metadata:  ctx.Metadata,
+		Timestamp: ctx.Timestamp.Unix(),
+	}
+
+	matched := false
+	for i := range route.Patterns {
+		if rs.patternMatcher.Match(&route.Patterns[i], msg) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return false
+	}
+
+	rs.statisticsTracker.RecordMatch(route.ID, route.Name)
+
+	if len(route.Conditions) == 0 {
+		return true
+	}
+
+	for i := range route.Conditions {
+		condMap := make(map[string]interface{})
+		condMap["type"] = route.Conditions[i].Type
+		if route.Conditions[i].TimeRange != nil {
+			condMap["timeRange"] = route.Conditions[i].TimeRange
+		}
+		if route.Conditions[i].ContentMatch != nil {
+			condMap["contentMatch"] = route.Conditions[i].ContentMatch
+		}
+		if route.Conditions[i].MetadataMatch != nil {
+			condMap["metadataMatch"] = route.Conditions[i].MetadataMatch
+		}
+		if route.Conditions[i].CustomFunction != "" {
+			condMap["customFunction"] = route.Conditions[i].CustomFunction
+		}
+
+		if !rs.conditionEvaluator.Evaluate(condMap, &ctx) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func bindingPrecedenceScore(route *Route, ctx RoutingContext) (int, bool) {
+	matchSpec := routeBindingMatch(route)
+	if matchSpec == nil {
+		return bindingRankUnspecified, true
+	}
+
+	hasSelector := false
+
+	if peer := normalizedString(matchSpec["peer"]); peer != "" {
+		hasSelector = true
+		if peer != routeContextValue(ctx, "peer", "peer_id", "peerId") {
+			return 0, false
+		}
+		return bindingRankPeer, true
+	}
+
+	if guild := normalizedString(matchSpec["guild_id"], matchSpec["guildId"]); guild != "" {
+		hasSelector = true
+		if guild != routeContextValue(ctx, "guild_id", "guildId") {
+			return 0, false
+		}
+		return bindingRankGuild, true
+	}
+
+	if team := normalizedString(matchSpec["team_id"], matchSpec["teamId"]); team != "" {
+		hasSelector = true
+		if team != routeContextValue(ctx, "team_id", "teamId") {
+			return 0, false
+		}
+		return bindingRankTeam, true
+	}
+
+	if account := normalizedString(matchSpec["account_id"], matchSpec["accountId"]); account != "" {
+		hasSelector = true
+		value := routeContextValue(ctx, "account_id", "accountId")
+		if account == "*" {
+			if value == "" {
+				return 0, false
+			}
+			return bindingRankAccountAny, true
+		}
+		if account != value {
+			return 0, false
+		}
+		return bindingRankAccountExact, true
+	}
+
+	if channel := normalizedString(matchSpec["channel"]); channel != "" {
+		hasSelector = true
+		if channel != routeContextValue(ctx, "channel") {
+			return 0, false
+		}
+		return bindingRankChannel, true
+	}
+
+	if defaultEnabled, ok := toBool(matchSpec["default"]); ok {
+		hasSelector = true
+		if defaultEnabled {
+			return bindingRankUnspecified, true
+		}
+		return 0, false
+	}
+
+	if !hasSelector {
+		return bindingRankUnspecified, true
+	}
+
+	return 0, false
+}
+
+func routeBindingMatch(route *Route) map[string]interface{} {
+	if route == nil || len(route.Metadata) == 0 {
+		return nil
+	}
+
+	if raw, ok := route.Metadata["match"]; ok {
+		if matchMap, ok := toStringAnyMap(raw); ok {
+			return matchMap
+		}
+	}
+	if raw, ok := route.Metadata["binding"]; ok {
+		if matchMap, ok := toStringAnyMap(raw); ok {
+			return matchMap
+		}
+	}
+
+	if _, ok := route.Metadata["peer"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["guild_id"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["guildId"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["team_id"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["teamId"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["account_id"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["accountId"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["channel"]; ok {
+		return route.Metadata
+	}
+	if _, ok := route.Metadata["default"]; ok {
+		return route.Metadata
+	}
+
+	return nil
+}
+
+func routeContextValue(ctx RoutingContext, key string, aliases ...string) string {
+	switch key {
+	case "peer":
+		if ctx.PeerID != "" {
+			return normalizedString(ctx.PeerID)
+		}
+	case "guild_id":
+		if ctx.GuildID != "" {
+			return normalizedString(ctx.GuildID)
+		}
+	case "team_id":
+		if ctx.TeamID != "" {
+			return normalizedString(ctx.TeamID)
+		}
+	case "account_id":
+		if ctx.AccountID != "" {
+			return normalizedString(ctx.AccountID)
+		}
+	case "channel":
+		if ctx.Channel != "" {
+			return normalizedString(ctx.Channel)
+		}
+		if ctx.Source != "" {
+			return normalizedString(ctx.Source)
+		}
+	}
+
+	keys := append([]string{key}, aliases...)
+	for _, candidate := range keys {
+		if ctx.Metadata == nil {
+			continue
+		}
+		if raw, ok := ctx.Metadata[candidate]; ok {
+			if value := normalizedString(raw); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func normalizedString(values ...interface{}) string {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case string:
+			trimmed := strings.TrimSpace(strings.ToLower(typed))
+			if trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return typed, true
+	case map[string]string:
+		out := make(map[string]interface{}, len(typed))
+		for k, v := range typed {
+			out[k] = v
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func toBool(value interface{}) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		normalized := strings.TrimSpace(strings.ToLower(typed))
+		if normalized == "true" {
+			return true, true
+		}
+		if normalized == "false" {
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // deliverWithFallback attempts delivery with fallback chain

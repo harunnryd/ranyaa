@@ -116,6 +116,18 @@ func TestAgentConfig_Validate(t *testing.T) {
 			errMsg:  "max_concurrent_sub_agents must be non-negative",
 		},
 		{
+			name: "invalid empty allowed sub-agent entry",
+			config: AgentConfig{
+				ID:               "test-agent",
+				Name:             "Test Agent",
+				Role:             RoleExecutor,
+				Model:            "claude-sonnet-4",
+				AllowedSubAgents: []string{"executor", ""},
+			},
+			wantErr: true,
+			errMsg:  "allowed_sub_agents[1] cannot be empty",
+		},
+		{
 			name: "valid captain config",
 			config: AgentConfig{
 				ID:                     "captain",
@@ -194,6 +206,7 @@ func TestAgentConfig_JSON(t *testing.T) {
 					Mode:  SandboxModeAll,
 					Scope: SandboxScopeAgent,
 				},
+				AllowedSubAgents:       []string{"executor", "critic"},
 				MaxConcurrentSubAgents: 5,
 				Metadata: map[string]string{
 					"version": "1.0",
@@ -271,6 +284,9 @@ func TestAgentConfig_JSON(t *testing.T) {
 			if decoded.MaxConcurrentSubAgents != tt.config.MaxConcurrentSubAgents {
 				t.Errorf("MaxConcurrentSubAgents mismatch: got %v, want %v", decoded.MaxConcurrentSubAgents, tt.config.MaxConcurrentSubAgents)
 			}
+			if len(decoded.AllowedSubAgents) != len(tt.config.AllowedSubAgents) {
+				t.Errorf("AllowedSubAgents length mismatch: got %v, want %v", len(decoded.AllowedSubAgents), len(tt.config.AllowedSubAgents))
+			}
 
 			// Test that we can unmarshal back to JSON
 			var jsonMap map[string]interface{}
@@ -308,6 +324,9 @@ func TestAgentConfig_Helpers(t *testing.T) {
 		}
 		if config.MaxConcurrentSubAgents != 5 {
 			t.Errorf("Default MaxConcurrentSubAgents = %v, want 5", config.MaxConcurrentSubAgents)
+		}
+		if len(config.AllowedSubAgents) != 1 || config.AllowedSubAgents[0] != "*" {
+			t.Errorf("Default AllowedSubAgents = %v, want [*]", config.AllowedSubAgents)
 		}
 		if len(config.Tools.Allow) != 1 || config.Tools.Allow[0] != "*" {
 			t.Errorf("Default Tools.Allow = %v, want [*]", config.Tools.Allow)
@@ -347,6 +366,7 @@ func TestAgentConfig_Helpers(t *testing.T) {
 			WithWorkspace("/tmp/test").
 			WithSandbox(SandboxModeAll, SandboxScopeSession).
 			WithMaxConcurrentSubAgents(10).
+			WithAllowedSubAgents([]string{"executor", "critic"}).
 			WithMetadata("key1", "value1").
 			WithMetadata("key2", "value2")
 
@@ -371,6 +391,9 @@ func TestAgentConfig_Helpers(t *testing.T) {
 		if config.MaxConcurrentSubAgents != 10 {
 			t.Errorf("MaxConcurrentSubAgents = %v, want 10", config.MaxConcurrentSubAgents)
 		}
+		if len(config.AllowedSubAgents) != 2 || config.AllowedSubAgents[0] != "executor" || config.AllowedSubAgents[1] != "critic" {
+			t.Errorf("AllowedSubAgents = %v, want [executor critic]", config.AllowedSubAgents)
+		}
 		if config.Metadata["key1"] != "value1" {
 			t.Errorf("Metadata[key1] = %v, want value1", config.Metadata["key1"])
 		}
@@ -382,6 +405,7 @@ func TestAgentConfig_Helpers(t *testing.T) {
 	t.Run("Clone", func(t *testing.T) {
 		original := NewAgentConfig("test", "Test", RoleExecutor, "model").
 			WithTools([]string{"tool1", "tool2"}, []string{"tool3"}).
+			WithAllowedSubAgents([]string{"executor"}).
 			WithMetadata("key", "value")
 
 		clone := original.Clone()
@@ -389,6 +413,7 @@ func TestAgentConfig_Helpers(t *testing.T) {
 		// Modify clone
 		clone.ID = "modified"
 		clone.Tools.Allow[0] = "modified-tool"
+		clone.AllowedSubAgents[0] = "modified-sub-agent"
 		clone.Metadata["key"] = "modified-value"
 
 		// Original should be unchanged
@@ -397,6 +422,9 @@ func TestAgentConfig_Helpers(t *testing.T) {
 		}
 		if original.Tools.Allow[0] == "modified-tool" {
 			t.Error("Clone modified original Tools.Allow")
+		}
+		if original.AllowedSubAgents[0] == "modified-sub-agent" {
+			t.Error("Clone modified original AllowedSubAgents")
 		}
 		if original.Metadata["key"] == "modified-value" {
 			t.Error("Clone modified original Metadata")
@@ -472,6 +500,57 @@ func TestAgentConfig_Helpers(t *testing.T) {
 				got := tt.config.IsToolAllowed(tt.toolName)
 				if got != tt.want {
 					t.Errorf("IsToolAllowed(%v) = %v, want %v", tt.toolName, got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("IsSubAgentAllowed", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			config AgentConfig
+			target string
+			want   bool
+		}{
+			{
+				name: "empty allowlist preserves compatibility",
+				config: AgentConfig{
+					AllowedSubAgents: nil,
+				},
+				target: "executor",
+				want:   true,
+			},
+			{
+				name: "wildcard allows all",
+				config: AgentConfig{
+					AllowedSubAgents: []string{"*"},
+				},
+				target: "executor",
+				want:   true,
+			},
+			{
+				name: "specific allow",
+				config: AgentConfig{
+					AllowedSubAgents: []string{"executor", "critic"},
+				},
+				target: "executor",
+				want:   true,
+			},
+			{
+				name: "specific deny",
+				config: AgentConfig{
+					AllowedSubAgents: []string{"critic"},
+				},
+				target: "executor",
+				want:   false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.config.IsSubAgentAllowed(tt.target)
+				if got != tt.want {
+					t.Errorf("IsSubAgentAllowed(%v) = %v, want %v", tt.target, got, tt.want)
 				}
 			})
 		}

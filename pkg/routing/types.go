@@ -106,6 +106,11 @@ type RoutingContext struct {
 	Metadata  map[string]interface{} `json:"metadata"`
 	Timestamp time.Time              `json:"timestamp"`
 	Source    string                 `json:"source,omitempty"`
+	Channel   string                 `json:"channel,omitempty"`
+	PeerID    string                 `json:"peerId,omitempty"`
+	GuildID   string                 `json:"guildId,omitempty"`
+	TeamID    string                 `json:"teamId,omitempty"`
+	AccountID string                 `json:"accountId,omitempty"`
 }
 
 // RoutingResult represents the result of a routing operation

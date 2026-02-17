@@ -336,6 +336,7 @@ func (d *Daemon) registerOrchestratorAgents() error {
 				Scope: orchestrator.SandboxScope(sandboxScope),
 			},
 			MaxConcurrentSubAgents: cfg.MaxConcurrentSubAgents,
+			AllowedSubAgents:       append([]string{}, cfg.AllowedSubAgents...),
 			Metadata: map[string]string{
 				"source": "daemon-config",
 			},

@@ -3,9 +3,12 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
+	"github.com/harun/ranya/pkg/routing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -68,17 +71,22 @@ func (r *Router) RouteMessageAndWait(ctx context.Context, msg Message) (interfac
 
 // processMessage processes a message with the specified agent
 func (r *Router) processMessage(ctx context.Context, msg Message) (interface{}, error) {
+	agentID, err := r.resolveAgentID(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+
 	logger := tracing.LoggerFromContext(ctx, r.daemon.logger.GetZerolog())
 	logger.Info().
 		Str("session_key", msg.SessionKey).
-		Str("agent_id", msg.AgentID).
+		Str("agent_id", agentID).
 		Msg("Processing message")
 
 	result, _, err := r.daemon.executeRuntimeFlow(ctx, RuntimeRequest{
 		Prompt:     msg.Content,
 		SessionKey: msg.SessionKey,
 		Source:     msg.Source,
-		AgentID:    msg.AgentID,
+		AgentID:    agentID,
 		RunConfig:  msg.RunConfig,
 		CWD:        msg.CWD,
 		Metadata:   msg.Metadata,
@@ -89,6 +97,60 @@ func (r *Router) processMessage(ctx context.Context, msg Message) (interface{}, 
 	}
 
 	return result, nil
+}
+
+func (r *Router) resolveAgentID(ctx context.Context, msg Message) (string, error) {
+	if strings.TrimSpace(msg.AgentID) != "" || r.daemon.routingService == nil {
+		return msg.AgentID, nil
+	}
+
+	routingCtx := routing.RoutingContext{
+		MessageID: msg.SessionKey,
+		Content:   msg.Content,
+		Metadata:  msg.Metadata,
+		Timestamp: time.Now(),
+		Source:    msg.Source,
+		Channel:   msg.Source,
+		PeerID:    routingMetadataValue(msg.Metadata, "peer", "peer_id", "peerId", "chat_id", "chatId"),
+		GuildID:   routingMetadataValue(msg.Metadata, "guild_id", "guildId"),
+		TeamID:    routingMetadataValue(msg.Metadata, "team_id", "teamId"),
+		AccountID: routingMetadataValue(msg.Metadata, "account_id", "accountId", "account"),
+	}
+
+	route, err := r.daemon.routingService.ResolveRoute(routingCtx)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve routing target: %w", err)
+	}
+	if route == nil || route.Handler == "" {
+		return msg.AgentID, nil
+	}
+
+	logger := tracing.LoggerFromContext(ctx, r.daemon.logger.GetZerolog())
+	logger.Info().
+		Str("route_id", route.ID).
+		Str("handler", route.Handler).
+		Msg("Routing service resolved agent handler")
+
+	return route.Handler, nil
+}
+
+func routingMetadataValue(metadata map[string]interface{}, keys ...string) string {
+	if metadata == nil {
+		return ""
+	}
+	for _, key := range keys {
+		raw, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		if value, ok := raw.(string); ok {
+			trimmed := strings.TrimSpace(value)
+			if trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 // Message represents a message to be routed

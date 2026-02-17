@@ -16,6 +16,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "info", cfg.Logging.Level)
 	assert.Len(t, cfg.Agents, 1)
 	assert.Equal(t, "default", cfg.Agents[0].ID)
+	assert.Equal(t, []string{"*"}, cfg.Agents[0].AllowedSubAgents)
 }
 
 func TestConfigValidate(t *testing.T) {
@@ -110,6 +111,24 @@ func TestConfigValidate(t *testing.T) {
 		err := cfg.Validate()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid role")
+	})
+
+	t.Run("invalid allowed sub-agents entry", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
+		cfg.Channels.Telegram.Enabled = false
+		cfg.Agents[0].AllowedSubAgents = []string{"executor", ""}
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "allowed_sub_agents")
 	})
 
 	t.Run("telegram enabled without token", func(t *testing.T) {

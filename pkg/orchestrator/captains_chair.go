@@ -196,7 +196,8 @@ Break down the task into clear steps that an executor agent can follow. Be speci
 Do not execute the task yourself - only create the plan.`, req.Task)
 
 	spawnReq := SpawnRequest{
-		AgentID: req.CaptainID,
+		AgentID:       req.CaptainID,
+		ParentAgentID: req.CaptainID,
 		Context: AgentContext{
 			ParentSessionKey: req.Context.ParentSessionKey,
 			SharedState:      req.Context.SharedState,
@@ -234,7 +235,8 @@ Execute the plan precisely and report your results.`, req.Task, planResult.Outpu
 	sharedState["plan"] = planResult.Output
 
 	spawnReq := SpawnRequest{
-		AgentID: req.ExecutorID,
+		AgentID:       req.ExecutorID,
+		ParentAgentID: req.CaptainID,
 		Context: AgentContext{
 			ParentSessionKey: req.Context.ParentSessionKey,
 			SharedState:      sharedState,
@@ -278,7 +280,8 @@ Provide constructive feedback and identify any issues that need correction.`, re
 	sharedState["execution"] = executorResult.Output
 
 	spawnReq := SpawnRequest{
-		AgentID: req.CriticID,
+		AgentID:       req.CriticID,
+		ParentAgentID: req.CaptainID,
 		Context: AgentContext{
 			ParentSessionKey: req.Context.ParentSessionKey,
 			SharedState:      sharedState,
@@ -322,7 +325,8 @@ Provide a clear, complete final answer to the original task.`, req.Task, executo
 	sharedState["review"] = criticResult.Output
 
 	spawnReq := SpawnRequest{
-		AgentID: req.CaptainID,
+		AgentID:       req.CaptainID,
+		ParentAgentID: req.CaptainID,
 		Context: AgentContext{
 			ParentSessionKey: req.Context.ParentSessionKey,
 			SharedState:      sharedState,

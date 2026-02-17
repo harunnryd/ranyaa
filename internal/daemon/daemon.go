@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -133,11 +134,9 @@ func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 
 // initializeCoreModules initializes all core modules
 func (d *Daemon) initializeCoreModules() error {
-	// 1. Command Queue
 	d.queue = commandqueue.New()
 	d.logger.Info().Msg("Command queue initialized")
 
-	// 2. Session Manager
 	sessionMgr, err := session.New(d.config.DataDir + "/sessions")
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
@@ -145,7 +144,6 @@ func (d *Daemon) initializeCoreModules() error {
 	d.sessionMgr = sessionMgr
 	d.logger.Info().Msg("Session manager initialized")
 
-	// 3. Memory Manager
 	memoryMgr, err := memory.NewManager(memory.Config{
 		WorkspacePath: d.config.WorkspacePath,
 		DBPath:        d.config.DataDir + "/memory.db",
@@ -285,7 +283,6 @@ func (d *Daemon) initializeCoreModules() error {
 
 // initializeServices initializes all services
 func (d *Daemon) initializeServices() error {
-	// 1. Gateway Server
 	gatewayServer, err := gateway.NewServer(gateway.Config{
 		Port:            d.config.Gateway.Port,
 		SharedSecret:    d.config.Gateway.SharedSecret,
@@ -333,7 +330,6 @@ func (d *Daemon) initializeServices() error {
 		})
 	}))
 
-	// 2. Node Manager
 	nodeManager := node.NewNodeManager(node.NodeManagerConfig{
 		NodeConfig: node.NodeConfig{
 			HeartbeatInterval:   30 * time.Second,
@@ -349,12 +345,14 @@ func (d *Daemon) initializeServices() error {
 	d.nodeManager = nodeManager
 	d.logger.Info().Msg("Node manager initialized")
 
-	// 3. Routing Service
-	routingService := routing.NewRoutingService(routing.RoutingServiceConfig{})
+	routingCfg := routing.DefaultRoutingServiceConfig()
+	if d.config.DataDir != "" {
+		routingCfg.Storage.FilePath = filepath.Join(d.config.DataDir, "routes.json")
+	}
+	routingService := routing.NewRoutingService(routingCfg)
 	d.routingService = routingService
 	d.logger.Info().Msg("Routing service initialized")
 
-	// 4. Register gateway methods
 	if err := node.RegisterGatewayMethods(d.gatewayServer, d.nodeManager, d.queue); err != nil {
 		return fmt.Errorf("failed to register node gateway methods: %w", err)
 	}
@@ -363,7 +361,6 @@ func (d *Daemon) initializeServices() error {
 	}
 	d.logger.Info().Msg("Gateway methods registered")
 
-	// 5. Webhook Server (if enabled)
 	if d.config.Webhook.Enabled {
 		webhookServer, err := webhook.NewServer(
 			webhook.ServerOptions{
@@ -382,7 +379,6 @@ func (d *Daemon) initializeServices() error {
 		d.logger.Info().Int("port", d.config.Webhook.Port).Msg("Webhook server initialized")
 	}
 
-	// 6. Cron Service
 	cronService, err := cron.NewService(cron.ServiceOptions{
 		StorePath: d.config.DataDir + "/cron.json",
 		EnqueueSystemEvent: func(text string, agentID string) {
@@ -438,7 +434,6 @@ func (d *Daemon) initializeServices() error {
 	d.cronService = cronService
 	d.logger.Info().Msg("Cron service initialized")
 
-	// 7. Telegram Bot (if enabled)
 	if d.config.Channels.Telegram.Enabled {
 		bot, err := telegram.New(&d.config.Telegram, d.logger)
 		if err != nil {
@@ -619,6 +614,14 @@ func (d *Daemon) Start() error {
 	// Start cron service
 	logger.Info().Msg("Cron service started")
 
+	// Start routing service
+	if d.routingService != nil {
+		if err := d.routingService.Start(); err != nil {
+			return fmt.Errorf("failed to start routing service: %w", err)
+		}
+		logger.Info().Msg("Routing service started")
+	}
+
 	// Start Telegram bot if enabled
 	if d.telegramBot != nil {
 		if err := d.telegramBot.Start(); err != nil {
@@ -690,6 +693,13 @@ func (d *Daemon) Stop() error {
 
 	// Stop cron service
 	logger.Info().Msg("Cron service stopped")
+
+	// Stop routing service
+	if d.routingService != nil {
+		if err := d.routingService.Stop(); err != nil {
+			logger.Error().Err(err).Msg("Failed to stop routing service")
+		}
+	}
 
 	// Stop workspace manager
 	if d.workspaceMgr != nil {

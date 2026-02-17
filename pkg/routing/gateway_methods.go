@@ -75,6 +75,9 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 			if val, ok := params["enabled"].(bool); ok {
 				route.Enabled = val
 			}
+			if val, ok := params["metadata"].(map[string]interface{}); ok {
+				route.Metadata = val
+			}
 
 			// Parse patterns
 			if patternsRaw, ok := params["patterns"].([]interface{}); ok {

@@ -144,6 +144,113 @@ func TestSpawn_AgentNotFound(t *testing.T) {
 	assert.False(t, result.Success)
 }
 
+func TestSpawn_ParentAgentNotFound(t *testing.T) {
+	orchestrator := New()
+	runner := &mockAgentRunner{}
+	spawner := NewSpawner(orchestrator, runner, nil)
+
+	agentConfig := AgentConfig{
+		ID:          "executor",
+		Name:        "Executor Agent",
+		Role:        RoleExecutor,
+		Model:       "claude-sonnet-4",
+		Temperature: 0.7,
+		MaxTokens:   4096,
+	}
+	err := orchestrator.RegisterAgent(agentConfig)
+	require.NoError(t, err)
+
+	req := SpawnRequest{
+		AgentID:       "executor",
+		ParentAgentID: "missing-parent",
+		Context: AgentContext{
+			Instructions: "Execute this task",
+		},
+	}
+
+	result, err := spawner.Spawn(context.Background(), req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get parent agent config")
+	assert.False(t, result.Success)
+}
+
+func TestSpawn_SubAgentDeniedByParentAllowlist(t *testing.T) {
+	orchestrator := New()
+	runner := &mockAgentRunner{}
+	spawner := NewSpawner(orchestrator, runner, nil)
+
+	parent := AgentConfig{
+		ID:               "captain",
+		Name:             "Captain Agent",
+		Role:             RoleCaptain,
+		Model:            "claude-opus-4",
+		AllowedSubAgents: []string{"critic"},
+	}
+	target := AgentConfig{
+		ID:          "executor",
+		Name:        "Executor Agent",
+		Role:        RoleExecutor,
+		Model:       "claude-sonnet-4",
+		Temperature: 0.7,
+		MaxTokens:   4096,
+	}
+	require.NoError(t, orchestrator.RegisterAgent(parent))
+	require.NoError(t, orchestrator.RegisterAgent(target))
+
+	req := SpawnRequest{
+		AgentID:       "executor",
+		ParentAgentID: "captain",
+		Context: AgentContext{
+			Instructions: "Execute this task",
+		},
+	}
+
+	result, err := spawner.Spawn(context.Background(), req)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "is not allowed to spawn sub-agent")
+	assert.False(t, result.Success)
+}
+
+func TestSpawn_SubAgentAllowedByParentAllowlist(t *testing.T) {
+	orchestrator := New()
+	runner := &mockAgentRunner{}
+	spawner := NewSpawner(orchestrator, runner, nil)
+
+	parent := AgentConfig{
+		ID:               "captain",
+		Name:             "Captain Agent",
+		Role:             RoleCaptain,
+		Model:            "claude-opus-4",
+		AllowedSubAgents: []string{"executor"},
+	}
+	target := AgentConfig{
+		ID:          "executor",
+		Name:        "Executor Agent",
+		Role:        RoleExecutor,
+		Model:       "claude-sonnet-4",
+		Temperature: 0.7,
+		MaxTokens:   4096,
+	}
+	require.NoError(t, orchestrator.RegisterAgent(parent))
+	require.NoError(t, orchestrator.RegisterAgent(target))
+
+	req := SpawnRequest{
+		AgentID:       "executor",
+		ParentAgentID: "captain",
+		Context: AgentContext{
+			Instructions: "Execute this task",
+		},
+	}
+
+	result, err := spawner.Spawn(context.Background(), req)
+
+	assert.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, "executor", result.AgentID)
+}
+
 func TestSpawn_MaxConcurrentReached(t *testing.T) {
 	// Setup orchestrator with max 1 concurrent agent
 	orchestrator := New(WithMaxConcurrent(1))

@@ -11,6 +11,7 @@ func DefaultAgentConfig() AgentConfig {
 		Temperature:            0.7,
 		MaxTokens:              4096,
 		MaxConcurrentSubAgents: 5,
+		AllowedSubAgents:       []string{"*"},
 		Tools: ToolPolicy{
 			Allow: []string{"*"},
 			Deny:  []string{},
@@ -81,6 +82,16 @@ func (c AgentConfig) WithMaxConcurrentSubAgents(max int) AgentConfig {
 	return c
 }
 
+// WithAllowedSubAgents sets the sub-agent allowlist for the agent config.
+func (c AgentConfig) WithAllowedSubAgents(allowed []string) AgentConfig {
+	if allowed == nil {
+		c.AllowedSubAgents = nil
+		return c
+	}
+	c.AllowedSubAgents = append([]string{}, allowed...)
+	return c
+}
+
 // WithMetadata sets metadata for the agent config
 func (c AgentConfig) WithMetadata(key, value string) AgentConfig {
 	if c.Metadata == nil {
@@ -121,6 +132,10 @@ func (c AgentConfig) Clone() AgentConfig {
 	if c.Tools.Deny != nil {
 		clone.Tools.Deny = make([]string, len(c.Tools.Deny))
 		copy(clone.Tools.Deny, c.Tools.Deny)
+	}
+	if c.AllowedSubAgents != nil {
+		clone.AllowedSubAgents = make([]string, len(c.AllowedSubAgents))
+		copy(clone.AllowedSubAgents, c.AllowedSubAgents)
 	}
 
 	// Deep copy metadata

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // AgentRole defines the role of an agent in the orchestration
@@ -28,6 +29,7 @@ type AgentConfig struct {
 	Workspace              string            `json:"workspace,omitempty" yaml:"workspace,omitempty"`
 	Sandbox                SandboxConfig     `json:"sandbox" yaml:"sandbox"`
 	MaxConcurrentSubAgents int               `json:"max_concurrent_sub_agents" yaml:"max_concurrent_sub_agents"`
+	AllowedSubAgents       []string          `json:"allowed_sub_agents,omitempty" yaml:"allowed_sub_agents,omitempty"`
 	Metadata               map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
@@ -89,6 +91,11 @@ func (c AgentConfig) Validate() error {
 	if c.MaxConcurrentSubAgents < 0 {
 		return fmt.Errorf("max_concurrent_sub_agents must be non-negative, got: %d", c.MaxConcurrentSubAgents)
 	}
+	for idx, subAgentID := range c.AllowedSubAgents {
+		if strings.TrimSpace(subAgentID) == "" {
+			return fmt.Errorf("allowed_sub_agents[%d] cannot be empty", idx)
+		}
+	}
 
 	return nil
 }
@@ -133,9 +140,24 @@ type AgentResult struct {
 
 // SpawnRequest represents a request to spawn a sub-agent
 type SpawnRequest struct {
-	AgentID string       `json:"agent_id"`
-	Context AgentContext `json:"context"`
-	Timeout int          `json:"timeout_seconds"` // Default 300s
+	AgentID       string       `json:"agent_id"`
+	ParentAgentID string       `json:"parent_agent_id,omitempty"`
+	Context       AgentContext `json:"context"`
+	Timeout       int          `json:"timeout_seconds"` // Default 300s
+}
+
+// IsSubAgentAllowed checks whether this agent is allowed to spawn the target sub-agent.
+// Empty allowlist preserves existing behavior and allows all.
+func (c AgentConfig) IsSubAgentAllowed(targetAgentID string) bool {
+	if len(c.AllowedSubAgents) == 0 {
+		return true
+	}
+	for _, allowed := range c.AllowedSubAgents {
+		if allowed == "*" || allowed == targetAgentID {
+			return true
+		}
+	}
+	return false
 }
 
 // ParallelRequest represents a request for parallel agent execution
