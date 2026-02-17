@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -52,7 +53,13 @@ func New(cfg *config.TelegramConfig, log *logger.Logger) (*Bot, error) {
 	}
 
 	// Create bot API instance
-	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
+	apiEndpoint := strings.TrimSpace(cfg.APIEndpoint)
+	api, err := func() (*tgbotapi.BotAPI, error) {
+		if apiEndpoint == "" {
+			return tgbotapi.NewBotAPI(cfg.BotToken)
+		}
+		return tgbotapi.NewBotAPIWithAPIEndpoint(cfg.BotToken, apiEndpoint)
+	}()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bot API: %w", err)
 	}
@@ -178,6 +185,16 @@ func (b *Bot) SendMessage(chatID int64, text string) error {
 	return nil
 }
 
+// SendMessageRaw sends a text message and returns Telegram message metadata.
+func (b *Bot) SendMessageRaw(chatID int64, text string) (tgbotapi.Message, error) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	sent, err := b.api.Send(msg)
+	if err != nil {
+		return tgbotapi.Message{}, fmt.Errorf("failed to send message: %w", err)
+	}
+	return sent, nil
+}
+
 // SendMessageWithReply sends a text message as a reply
 func (b *Bot) SendMessageWithReply(chatID int64, text string, replyToMessageID int) error {
 	msg := tgbotapi.NewMessage(chatID, text)
@@ -193,6 +210,16 @@ func (b *Bot) SendMessageWithReply(chatID int64, text string, replyToMessageID i
 		Int("reply_to", replyToMessageID).
 		Msg("Reply sent")
 
+	return nil
+}
+
+// EditMessage updates an existing Telegram message.
+func (b *Bot) EditMessage(chatID int64, messageID int, text string) error {
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	_, err := b.api.Send(edit)
+	if err != nil {
+		return fmt.Errorf("failed to edit message: %w", err)
+	}
 	return nil
 }
 

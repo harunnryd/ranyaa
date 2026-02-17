@@ -177,6 +177,28 @@ func TestValidateDMPolicy(t *testing.T) {
 	})
 }
 
+func TestValidateTelegramStreamMode(t *testing.T) {
+	v := NewValidator()
+
+	t.Run("valid modes", func(t *testing.T) {
+		modes := []string{"off", "partial", "block"}
+		for _, mode := range modes {
+			err := v.ValidateTelegramStreamMode(mode)
+			assert.NoError(t, err, "mode %s should be valid", mode)
+		}
+	})
+
+	t.Run("empty mode", func(t *testing.T) {
+		err := v.ValidateTelegramStreamMode("")
+		assert.NoError(t, err)
+	})
+
+	t.Run("invalid mode", func(t *testing.T) {
+		err := v.ValidateTelegramStreamMode("invalid")
+		assert.Error(t, err)
+	})
+}
+
 func TestValidateConfig(t *testing.T) {
 	v := NewValidator()
 

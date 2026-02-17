@@ -109,6 +109,7 @@ func (l *Loader) Save(cfg *Config) error {
 	v.Set("models", cfg.Models)
 	v.Set("channels", cfg.Channels)
 	v.Set("tools", cfg.Tools)
+	v.Set("hooks", cfg.Hooks)
 	v.Set("logging", cfg.Logging)
 	v.Set("data_dir", cfg.DataDir)
 	v.Set("workspace_path", cfg.WorkspacePath)

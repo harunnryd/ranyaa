@@ -131,7 +131,12 @@ func (d *Daemon) configureTelegramApprovalWorkflow() error {
 		}
 	}
 
-	commands := telegram.NewCommands(d.telegramBot)
+	commands := d.telegramCmd
+	if commands == nil {
+		commands = telegram.NewCommands(d.telegramBot)
+		d.telegramCmd = commands
+		d.telegramBot.SetCommandHandler(commands)
+	}
 	commands.Register("approve", func(cmdCtx telegram.CommandContext) error {
 		if len(cmdCtx.Args) != 2 {
 			return commands.SendResponse(cmdCtx, "Usage: /approve <id> allow-once|allow-always|deny")
@@ -154,7 +159,6 @@ func (d *Daemon) configureTelegramApprovalWorkflow() error {
 
 		return commands.SendResponse(cmdCtx, fmt.Sprintf("Approval %s resolved: %s", approvalID, action))
 	})
-	d.telegramBot.SetCommandHandler(commands)
 
 	d.logger.Info().
 		Int("targets", len(targets)).

@@ -22,6 +22,7 @@ import (
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/cron"
 	"github.com/harun/ranya/pkg/gateway"
+	"github.com/harun/ranya/pkg/hooks"
 	"github.com/harun/ranya/pkg/memory"
 	"github.com/harun/ranya/pkg/node"
 	"github.com/harun/ranya/pkg/orchestrator"
@@ -53,6 +54,7 @@ type Daemon struct {
 	orchestrator   *orchestrator.Orchestrator
 	planner        *planner.Planner
 	subagentCoord  *subagent.Coordinator
+	hookManager    *hooks.Manager
 
 	// Services
 	gatewayServer   *gateway.Server
@@ -64,6 +66,7 @@ type Daemon struct {
 
 	// Telegram
 	telegramBot *telegram.Bot
+	telegramCmd *telegram.Commands
 
 	// Session management
 	archiver *session.Archiver
@@ -73,6 +76,7 @@ type Daemon struct {
 	eventLoop *EventLoop
 	router    *Router
 	lifecycle *LifecycleManager
+	runtimeEvents *runtimeEventHub
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -105,6 +109,7 @@ func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 		ctx:            ctx,
 		cancel:         cancel,
 		tracingEnabled: true,
+		runtimeEvents:  newRuntimeEventHub(),
 	}
 
 	// Initialize core modules in dependency order
@@ -140,6 +145,14 @@ func (d *Daemon) initializeCoreModules() error {
 	d.queue = commandqueue.New()
 	d.logger.Info().Msg("Command queue initialized")
 
+	hookManager, err := newHookManager(d.config.Hooks, d.logger.GetZerolog())
+	if err != nil {
+		return fmt.Errorf("failed to create hook manager: %w", err)
+	}
+	d.hookManager = hookManager
+	d.bindQueueHooks()
+	d.logger.Info().Msg("Hook manager initialized")
+
 	sessionMgr, err := session.New(d.config.DataDir + "/sessions")
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
@@ -160,6 +173,12 @@ func (d *Daemon) initializeCoreModules() error {
 
 	// 4. Tool Executor
 	d.toolExecutor = toolexecutor.New()
+	d.toolExecutor.SetRetryConfig(toolexecutor.RetryConfig{
+		Enabled:        d.config.Tools.Retry.Enabled,
+		MaxAttempts:    d.config.Tools.Retry.MaxAttempts,
+		InitialBackoff: time.Duration(d.config.Tools.Retry.InitialBackoffMs) * time.Millisecond,
+		MaxBackoff:     time.Duration(d.config.Tools.Retry.MaxBackoffMs) * time.Millisecond,
+	})
 	sandboxCfg := sandbox.DefaultConfig()
 	sandboxCfg.Mode = sandbox.ModeTools
 	sandboxCfg.Scope = sandbox.ScopeSession
@@ -313,6 +332,9 @@ func (d *Daemon) initializeServices() error {
 	d.logger.Info().Int("port", d.config.Gateway.Port).Msg("Gateway server initialized")
 	d.agentRunner.SetEventEmitter(agent.EventEmitterFunc(func(ctx context.Context, evt agent.RuntimeEvent) {
 		if d.gatewayServer == nil {
+			if d.runtimeEvents != nil {
+				d.runtimeEvents.Publish(tracing.GetSessionKey(ctx), evt)
+			}
 			return
 		}
 
@@ -330,6 +352,8 @@ func (d *Daemon) initializeServices() error {
 			payload["content"] = evt.Content
 		}
 
+		sessionKey := tracing.GetSessionKey(ctx)
+
 		d.gatewayServer.BroadcastTyped(gateway.EventMessage{
 			Event:     evt.Event,
 			Stream:    gateway.StreamType(evt.Stream),
@@ -337,10 +361,14 @@ func (d *Daemon) initializeServices() error {
 			Data:      payload,
 			TraceID:   tracing.GetTraceID(ctx),
 			RunID:     tracing.GetRunID(ctx),
-			Session:   tracing.GetSessionKey(ctx),
+			Session:   sessionKey,
 			AgentID:   tracing.GetAgentID(ctx),
 			Timestamp: time.Now().UnixMilli(),
 		})
+
+		if d.runtimeEvents != nil {
+			d.runtimeEvents.Publish(sessionKey, evt)
+		}
 	}))
 
 	nodeManager := node.NewNodeManager(node.NodeManagerConfig{
@@ -457,7 +485,18 @@ func (d *Daemon) initializeServices() error {
 			return fmt.Errorf("failed to create telegram bot: %w", err)
 		}
 		d.telegramBot = bot
-		if err := d.registerChannel(newTelegramIngressChannel(bot, d.logger.GetZerolog())); err != nil {
+
+		commands := telegram.NewCommands(bot)
+		d.telegramCmd = commands
+		d.telegramBot.SetCommandHandler(commands)
+
+		if err := d.registerChannel(newTelegramIngressChannel(
+			bot,
+			commands,
+			d.config.Telegram,
+			d.subscribeRuntimeEvents,
+			d.logger.GetZerolog(),
+		)); err != nil {
 			return fmt.Errorf("failed to register telegram channel: %w", err)
 		}
 		if err := d.configureTelegramApprovalWorkflow(); err != nil {
@@ -677,6 +716,8 @@ func (d *Daemon) Start() error {
 		defer d.wg.Done()
 		d.eventLoop.Run(d.ctx)
 	}()
+
+	d.triggerStartupHooks()
 
 	logger.Info().Msg("Daemon started successfully - all core modules active")
 
@@ -979,6 +1020,15 @@ func (d *Daemon) GetOrchestrator() *orchestrator.Orchestrator {
 // GetPlanner returns the planner.
 func (d *Daemon) GetPlanner() *planner.Planner {
 	return d.planner
+}
+
+func (d *Daemon) subscribeRuntimeEvents(sessionKey string) (<-chan agent.RuntimeEvent, func()) {
+	if d.runtimeEvents == nil {
+		ch := make(chan agent.RuntimeEvent)
+		close(ch)
+		return ch, func() {}
+	}
+	return d.runtimeEvents.Subscribe(sessionKey, 128)
 }
 
 // GetSubagentCoordinator returns the subagent coordinator

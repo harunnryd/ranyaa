@@ -80,6 +80,14 @@ type ExecutionContext struct {
 	ToolPolicy    *ToolPolicy
 }
 
+// RetryConfig controls retry behavior for transient tool execution failures.
+type RetryConfig struct {
+	Enabled        bool
+	MaxAttempts    int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+}
+
 // ToolResult represents the result of a tool execution
 type ToolResult struct {
 	Success   bool                   `json:"success"`
@@ -99,6 +107,7 @@ type ToolExecutor struct {
 	policyEngine    *PolicyEngine
 	policyEvaluator *PolicyEvaluator
 	toolRegistry    *ToolRegistry
+	retryConfig     RetryConfig
 	mu              sync.RWMutex
 }
 
@@ -114,6 +123,12 @@ func New() *ToolExecutor {
 		pluginRuntime:   nil, // Plugin runtime is optional
 		policyEngine:    NewPolicyEngine(),
 		toolRegistry:    NewToolRegistry(),
+		retryConfig: RetryConfig{
+			Enabled:        true,
+			MaxAttempts:    3,
+			InitialBackoff: 250 * time.Millisecond,
+			MaxBackoff:     2 * time.Second,
+		},
 	}
 	te.policyEvaluator = NewPolicyEvaluator(te.policyEngine)
 
@@ -257,6 +272,23 @@ func (te *ToolExecutor) SetApprovalManager(manager *ApprovalManager) {
 	defer te.mu.Unlock()
 	te.approvalManager = manager
 	log.Info().Msg("Approval manager configured for tool executor")
+}
+
+// SetRetryConfig updates retry behavior for transient tool errors.
+func (te *ToolExecutor) SetRetryConfig(cfg RetryConfig) {
+	te.mu.Lock()
+	defer te.mu.Unlock()
+
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 1
+	}
+	if cfg.InitialBackoff <= 0 {
+		cfg.InitialBackoff = 250 * time.Millisecond
+	}
+	if cfg.MaxBackoff <= 0 {
+		cfg.MaxBackoff = 2 * time.Second
+	}
+	te.retryConfig = cfg
 }
 
 // RegisterTool registers a new tool
@@ -616,6 +648,66 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 	}
 }
 
+// ExecuteWithRetry runs tool execution with retry/backoff for transient failures.
+func (te *ToolExecutor) ExecuteWithRetry(ctx context.Context, toolName string, params map[string]interface{}, execCtx *ExecutionContext) ToolResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	te.mu.RLock()
+	retryCfg := te.retryConfig
+	te.mu.RUnlock()
+
+	if !retryCfg.Enabled || retryCfg.MaxAttempts <= 1 {
+		return te.Execute(ctx, toolName, params, execCtx)
+	}
+
+	var lastResult ToolResult
+	for attempt := 1; attempt <= retryCfg.MaxAttempts; attempt++ {
+		result := te.Execute(ctx, toolName, params, execCtx)
+		if result.Success {
+			if attempt > 1 {
+				if result.Metadata == nil {
+					result.Metadata = make(map[string]interface{})
+				}
+				result.Metadata["retry_attempts"] = attempt - 1
+			}
+			return result
+		}
+
+		lastResult = result
+		if !isRetryableToolError(result.Error) || attempt == retryCfg.MaxAttempts {
+			if attempt > 1 {
+				if lastResult.Metadata == nil {
+					lastResult.Metadata = make(map[string]interface{})
+				}
+				lastResult.Metadata["retry_attempts"] = attempt - 1
+			}
+			return lastResult
+		}
+
+		backoff := retryCfg.InitialBackoff * time.Duration(1<<(attempt-1))
+		if backoff > retryCfg.MaxBackoff {
+			backoff = retryCfg.MaxBackoff
+		}
+
+		select {
+		case <-ctx.Done():
+			cancelled := ToolResult{
+				Success: false,
+				Error:   ctx.Err().Error(),
+				Metadata: map[string]interface{}{
+					"retry_attempts": attempt - 1,
+				},
+			}
+			return cancelled
+		case <-time.After(backoff):
+		}
+	}
+
+	return lastResult
+}
+
 func (te *ToolExecutor) lookup(toolName string) (*ToolDefinition, *gojsonschema.Schema, ToolCategory, *SandboxManager) {
 	te.mu.RLock()
 	defer te.mu.RUnlock()
@@ -739,6 +831,42 @@ func inferToolCategory(name string, description string) ToolCategory {
 		return CategoryRead
 	}
 	return CategoryGeneral
+}
+
+func isRetryableToolError(errText string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(errText))
+	if normalized == "" {
+		return false
+	}
+
+	retryMarkers := []string{
+		"timeout",
+		"timed out",
+		"temporary",
+		"temporarily unavailable",
+		"connection reset",
+		"connection refused",
+		"network is unreachable",
+		"eof",
+		"broken pipe",
+		"i/o timeout",
+		"deadline exceeded",
+		"too many requests",
+		"rate limit",
+		"429",
+		"500",
+		"502",
+		"503",
+		"504",
+	}
+
+	for _, marker := range retryMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // validateToolDefinition validates a tool definition

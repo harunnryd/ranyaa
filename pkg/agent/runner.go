@@ -637,7 +637,7 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 				ToolCall: toolCall.ID,
 			})
 
-			result := r.toolExecutor.Execute(
+			result := r.toolExecutor.ExecuteWithRetry(
 				ctx,
 				toolCall.Name,
 				toolCall.Parameters,

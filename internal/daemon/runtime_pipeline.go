@@ -83,6 +83,11 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 	}
 	ctx = tracing.WithAgentID(ctx, agentCfg.ID)
 
+	if err := d.triggerAgentBootstrapHook(ctx, req, agentCfg.ID); err != nil {
+		logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog())
+		logger.Warn().Err(err).Msg("agent:bootstrap hooks failed")
+	}
+
 	runCfg := mergeRunConfig(agentCfg, req.RunConfig)
 	plan, err := d.generateRuntimePlan(req, runCfg)
 	if err != nil {

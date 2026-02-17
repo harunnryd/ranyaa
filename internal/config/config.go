@@ -23,6 +23,9 @@ type Config struct {
 	// Tools
 	Tools ToolsConfig `json:"tools" mapstructure:"tools"`
 
+	// Hooks
+	Hooks HooksConfig `json:"hooks" mapstructure:"hooks"`
+
 	// Logging
 	Logging LoggingConfig `json:"logging" mapstructure:"logging"`
 
@@ -44,9 +47,16 @@ type Config struct {
 
 // TelegramConfig holds Telegram bot configuration
 type TelegramConfig struct {
-	BotToken  string  `json:"bot_token" mapstructure:"bot_token"`
-	DMPolicy  string  `json:"dm_policy" mapstructure:"dm_policy"` // pairing, allowlist, open, disabled
-	Allowlist []int64 `json:"allowlist" mapstructure:"allowlist"`
+	BotToken           string  `json:"bot_token" mapstructure:"bot_token"`
+	DMPolicy           string  `json:"dm_policy" mapstructure:"dm_policy"` // pairing, allowlist, open, disabled
+	Allowlist          []int64 `json:"allowlist" mapstructure:"allowlist"`
+	DedupeTTLSeconds   int     `json:"dedupe_ttl_seconds" mapstructure:"dedupe_ttl_seconds"`
+	StreamMode         string  `json:"stream_mode" mapstructure:"stream_mode"` // off, partial
+	StreamMinInterval  int     `json:"stream_min_interval_ms" mapstructure:"stream_min_interval_ms"`
+	StreamMinChars     int     `json:"stream_min_chars" mapstructure:"stream_min_chars"`
+	APIEndpoint        string  `json:"api_endpoint,omitempty" mapstructure:"api_endpoint"`
+	PairingPrompt      string  `json:"pairing_prompt,omitempty" mapstructure:"pairing_prompt"`
+	PairingSuccessText string  `json:"pairing_success_text,omitempty" mapstructure:"pairing_success_text"`
 }
 
 // AgentConfig represents an agent configuration
@@ -100,12 +110,36 @@ type ChannelConfig struct {
 // ToolsConfig holds tool configuration
 type ToolsConfig struct {
 	ExecApprovals ExecApprovalsConfig `json:"exec_approvals" mapstructure:"exec_approvals"`
+	Retry         ToolRetryConfig     `json:"retry" mapstructure:"retry"`
 }
 
 // ExecApprovalsConfig holds exec approval settings
 type ExecApprovalsConfig struct {
 	Enabled       bool   `json:"enabled" mapstructure:"enabled"`
 	AllowlistPath string `json:"allowlist_path" mapstructure:"allowlist_path"`
+}
+
+// ToolRetryConfig holds transient retry settings for tool execution.
+type ToolRetryConfig struct {
+	Enabled          bool `json:"enabled" mapstructure:"enabled"`
+	MaxAttempts      int  `json:"max_attempts" mapstructure:"max_attempts"`
+	InitialBackoffMs int  `json:"initial_backoff_ms" mapstructure:"initial_backoff_ms"`
+	MaxBackoffMs     int  `json:"max_backoff_ms" mapstructure:"max_backoff_ms"`
+}
+
+// HooksConfig holds daemon hook execution settings.
+type HooksConfig struct {
+	Enabled bool         `json:"enabled" mapstructure:"enabled"`
+	Entries []HookConfig `json:"entries" mapstructure:"entries"`
+}
+
+// HookConfig defines a lifecycle hook script.
+type HookConfig struct {
+	ID        string `json:"id" mapstructure:"id"`
+	Event     string `json:"event" mapstructure:"event"` // daemon:startup, command:new, agent:bootstrap
+	Script    string `json:"script" mapstructure:"script"`
+	TimeoutMs int    `json:"timeout_ms,omitempty" mapstructure:"timeout_ms"`
+	Enabled   bool   `json:"enabled" mapstructure:"enabled"`
 }
 
 // LoggingConfig holds logging configuration
@@ -152,6 +186,12 @@ func DefaultConfig() *Config {
 	return &Config{
 		Telegram: TelegramConfig{
 			DMPolicy: "pairing",
+			DedupeTTLSeconds: 300,
+			StreamMode:       "partial",
+			StreamMinInterval: 2000,
+			StreamMinChars:   200,
+			PairingPrompt:    "⚠️ Please pair this device first. Send /pair to begin.",
+			PairingSuccessText: "✅ Device paired. You can now send messages.",
 		},
 		Models: ModelsConfig{
 			Default: "claude-sonnet-4",
@@ -170,6 +210,16 @@ func DefaultConfig() *Config {
 			ExecApprovals: ExecApprovalsConfig{
 				Enabled: true,
 			},
+			Retry: ToolRetryConfig{
+				Enabled:          true,
+				MaxAttempts:      3,
+				InitialBackoffMs: 250,
+				MaxBackoffMs:     2000,
+			},
+		},
+		Hooks: HooksConfig{
+			Enabled: false,
+			Entries: []HookConfig{},
 		},
 		Logging: LoggingConfig{
 			Level:     "info",

@@ -137,6 +137,21 @@ func (v *Validator) ValidateDMPolicy(policy string) error {
 	return fmt.Errorf("invalid DM policy: %s (must be one of: %s)", policy, strings.Join(validPolicies, ", "))
 }
 
+// ValidateTelegramStreamMode validates Telegram streaming mode.
+func (v *Validator) ValidateTelegramStreamMode(mode string) error {
+	if mode == "" {
+		return nil // Use default
+	}
+
+	validModes := []string{"off", "partial", "block"}
+	for _, valid := range validModes {
+		if mode == valid {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid telegram stream mode: %s (must be one of: %s)", mode, strings.Join(validModes, ", "))
+}
+
 // ValidateConfig performs comprehensive validation
 func (v *Validator) ValidateConfig(cfg *Config) []error {
 	var errors []error
@@ -160,6 +175,42 @@ func (v *Validator) ValidateConfig(cfg *Config) []error {
 	}
 	if err := v.ValidateDMPolicy(cfg.Telegram.DMPolicy); err != nil {
 		errors = append(errors, err)
+	}
+	if err := v.ValidateTelegramStreamMode(cfg.Telegram.StreamMode); err != nil {
+		errors = append(errors, err)
+	}
+	if cfg.Telegram.DedupeTTLSeconds < 0 {
+		errors = append(errors, fmt.Errorf("telegram dedupe_ttl_seconds must be >= 0"))
+	}
+	if cfg.Telegram.StreamMinInterval < 0 {
+		errors = append(errors, fmt.Errorf("telegram stream_min_interval_ms must be >= 0"))
+	}
+	if cfg.Telegram.StreamMinChars < 0 {
+		errors = append(errors, fmt.Errorf("telegram stream_min_chars must be >= 0"))
+	}
+
+	if cfg.Tools.Retry.MaxAttempts < 0 {
+		errors = append(errors, fmt.Errorf("tools.retry.max_attempts must be >= 0"))
+	}
+	if cfg.Tools.Retry.InitialBackoffMs < 0 {
+		errors = append(errors, fmt.Errorf("tools.retry.initial_backoff_ms must be >= 0"))
+	}
+	if cfg.Tools.Retry.MaxBackoffMs < 0 {
+		errors = append(errors, fmt.Errorf("tools.retry.max_backoff_ms must be >= 0"))
+	}
+
+	if cfg.Hooks.Enabled {
+		for i, hook := range cfg.Hooks.Entries {
+			if !hook.Enabled {
+				continue
+			}
+			if strings.TrimSpace(hook.Event) == "" {
+				errors = append(errors, fmt.Errorf("hook %d: event is required", i))
+			}
+			if strings.TrimSpace(hook.Script) == "" {
+				errors = append(errors, fmt.Errorf("hook %d: script is required", i))
+			}
+		}
 	}
 
 	// Validate agents
