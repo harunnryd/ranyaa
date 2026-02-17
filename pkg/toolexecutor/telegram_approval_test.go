@@ -1,6 +1,7 @@
 package toolexecutor
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -11,13 +12,16 @@ import (
 
 // MockBotAPI is a mock Telegram Bot API for testing
 type MockBotAPI struct {
+	mu             sync.Mutex
 	sentMessages   []tgbotapi.Chattable
 	editedMessages []tgbotapi.Chattable
 	callbacks      []tgbotapi.CallbackConfig
 }
 
 func (m *MockBotAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	m.mu.Lock()
 	m.sentMessages = append(m.sentMessages, c)
+	m.mu.Unlock()
 	return tgbotapi.Message{
 		MessageID: 123,
 		Chat:      &tgbotapi.Chat{ID: 456},
@@ -25,11 +29,13 @@ func (m *MockBotAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 }
 
 func (m *MockBotAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
+	m.mu.Lock()
 	if callback, ok := c.(tgbotapi.CallbackConfig); ok {
 		m.callbacks = append(m.callbacks, callback)
 	} else {
 		m.editedMessages = append(m.editedMessages, c)
 	}
+	m.mu.Unlock()
 	return &tgbotapi.APIResponse{Ok: true}, nil
 }
 
