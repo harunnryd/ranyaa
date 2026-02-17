@@ -78,6 +78,10 @@ type Daemon struct {
 	tracingEnabled bool
 }
 
+var newAgentRunner = func(cfg agent.Config) (*agent.Runner, error) {
+	return agent.NewRunner(cfg)
+}
+
 // New creates a new daemon instance
 func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -173,7 +177,7 @@ func (d *Daemon) initializeCoreModules() error {
 	}
 
 	// 7. Agent Runner (requires all above dependencies)
-	agentRunner, err := agent.NewRunner(agent.Config{
+	agentRunner, err := newAgentRunner(agent.Config{
 		SessionManager: d.sessionMgr,
 		ToolExecutor:   d.toolExecutor,
 		CommandQueue:   d.queue,
