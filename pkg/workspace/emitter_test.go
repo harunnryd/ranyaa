@@ -3,6 +3,7 @@ package workspace
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,16 +13,24 @@ import (
 func TestWorkspaceEventEmitter_On(t *testing.T) {
 	emitter := NewWorkspaceEventEmitter()
 
-	called := false
+	var called atomic.Bool
+	done := make(chan struct{}, 1)
 	emitter.On(EventFileAdded, func(payload interface{}) {
-		called = true
+		called.Store(true)
+		select {
+		case done <- struct{}{}:
+		default:
+		}
 	})
 
 	emitter.Emit(EventFileAdded, nil)
 
-	// Wait for async emission
-	time.Sleep(10 * time.Millisecond)
-	assert.True(t, called)
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for event handler")
+	}
+	assert.True(t, called.Load())
 }
 
 func TestWorkspaceEventEmitter_EmitFileAdded(t *testing.T) {
@@ -203,9 +212,9 @@ func TestWorkspaceEventEmitter_AsyncEmission(t *testing.T) {
 func TestWorkspaceEventEmitter_RemoveAllListeners(t *testing.T) {
 	emitter := NewWorkspaceEventEmitter()
 
-	called := false
+	var called atomic.Bool
 	emitter.On(EventFileAdded, func(payload interface{}) {
-		called = true
+		called.Store(true)
 	})
 
 	emitter.RemoveAllListeners()
@@ -221,5 +230,5 @@ func TestWorkspaceEventEmitter_RemoveAllListeners(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Handler should not have been called
-	assert.False(t, called)
+	assert.False(t, called.Load())
 }

@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -33,25 +34,25 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 	}
 
 	// Track events
-	var initEvent bool
-	var addEvent bool
-	var changeEvent bool
-	var deleteEvent bool
+	var initEvent atomic.Bool
+	var addEvent atomic.Bool
+	var changeEvent atomic.Bool
+	var deleteEvent atomic.Bool
 
 	manager.On(EventInitialized, func(payload interface{}) {
-		initEvent = true
+		initEvent.Store(true)
 	})
 
 	manager.On(EventFileAdded, func(payload interface{}) {
-		addEvent = true
+		addEvent.Store(true)
 	})
 
 	manager.On(EventFileChanged, func(payload interface{}) {
-		changeEvent = true
+		changeEvent.Store(true)
 	})
 
 	manager.On(EventFileDeleted, func(payload interface{}) {
-		deleteEvent = true
+		deleteEvent.Store(true)
 	})
 
 	// Initialize
@@ -59,12 +60,7 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	// Wait for initialization event
-	time.Sleep(100 * time.Millisecond)
-
-	if !initEvent {
-		t.Error("Initialization event not received")
-	}
+	waitForAtomicEvent(t, &initEvent, 2*time.Second, "initialization event")
 
 	// Verify files are loaded
 	files := manager.GetAllFiles()
@@ -91,12 +87,7 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 	newFile := filepath.Join(tmpDir, "TOOLS.md")
 	_ = os.WriteFile(newFile, []byte("# Tools\nAvailable tools..."), 0644)
 
-	// Wait for file added event
-	time.Sleep(200 * time.Millisecond)
-
-	if !addEvent {
-		t.Error("File added event not received")
-	}
+	waitForAtomicEvent(t, &addEvent, 2*time.Second, "file added event")
 
 	// Verify new file is in cache
 	files = manager.GetAllFiles()
@@ -107,12 +98,7 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 	// Test file change
 	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions\nUpdated content."), 0644)
 
-	// Wait for file changed event
-	time.Sleep(200 * time.Millisecond)
-
-	if !changeEvent {
-		t.Error("File changed event not received")
-	}
+	waitForAtomicEvent(t, &changeEvent, 2*time.Second, "file changed event")
 
 	// Verify content is updated
 	updatedContent, _ := manager.GetFileContent("AGENTS.md")
@@ -123,12 +109,7 @@ func TestIntegration_CompleteWorkflow(t *testing.T) {
 	// Test file deletion
 	os.Remove(newFile)
 
-	// Wait for file deleted event
-	time.Sleep(200 * time.Millisecond)
-
-	if !deleteEvent {
-		t.Error("File deleted event not received")
-	}
+	waitForAtomicEvent(t, &deleteEvent, 2*time.Second, "file deleted event")
 
 	// Verify file is removed from cache
 	files = manager.GetAllFiles()
@@ -227,16 +208,17 @@ func TestIntegration_CriticalFileReload(t *testing.T) {
 	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions"), 0644)
 
 	// Track reload callback
-	var reloadCalled bool
-	var reloadedFile *WorkspaceFile
+	reloadEvents := make(chan *WorkspaceFile, 8)
 
 	// Create workspace manager with reload callback
 	config := WorkspaceConfig{
 		WorkspacePath:    tmpDir,
 		EnableValidation: true,
 		OnReload: func(file *WorkspaceFile) {
-			reloadCalled = true
-			reloadedFile = file
+			select {
+			case reloadEvents <- file:
+			default:
+			}
 		},
 	}
 
@@ -253,17 +235,24 @@ func TestIntegration_CriticalFileReload(t *testing.T) {
 	// Wait for initialization
 	time.Sleep(100 * time.Millisecond)
 
-	// Reset flag
-	reloadCalled = false
+	// Reset by draining any initialization callback notifications.
+	for {
+		select {
+		case <-reloadEvents:
+		default:
+			goto drained
+		}
+	}
+drained:
 
 	// Modify critical file
 	_ = os.WriteFile(agentsFile, []byte("# Agent Instructions\nUpdated"), 0644)
 
-	// Wait for change detection
-	time.Sleep(200 * time.Millisecond)
-
-	if !reloadCalled {
-		t.Error("Reload callback not called for critical file")
+	var reloadedFile *WorkspaceFile
+	select {
+	case reloadedFile = <-reloadEvents:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reload callback not called for critical file")
 	}
 
 	if reloadedFile == nil {
@@ -294,7 +283,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 	_ = os.WriteFile(invalidFile, []byte("invalid: yaml: content:"), 0644)
 
 	// Track error events
-	var errorReceived bool
+	var errorReceived atomic.Bool
 
 	// Create workspace manager
 	config := WorkspaceConfig{
@@ -308,7 +297,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 	}
 
 	manager.On(EventError, func(payload interface{}) {
-		errorReceived = true
+		errorReceived.Store(true)
 	})
 
 	// Initialize - should continue despite invalid file
@@ -321,7 +310,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 
 	// Note: errorReceived may or may not be true depending on timing
 	// The important thing is that the system continues to work
-	_ = errorReceived
+	_ = errorReceived.Load()
 
 	// Verify valid file is loaded
 	files := manager.GetAllFiles()
@@ -336,6 +325,18 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 
 	// Close manager
 	manager.Close()
+}
+
+func waitForAtomicEvent(t *testing.T, flag *atomic.Bool, timeout time.Duration, eventName string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if flag.Load() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s not received within %s", eventName, timeout)
 }
 
 // TestIntegration_PerformanceBasic tests basic performance requirements
