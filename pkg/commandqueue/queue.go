@@ -109,6 +109,13 @@ func (cq *CommandQueue) initLane(lane string, concurrency int) {
 	}
 }
 
+func (cq *CommandQueue) getLane(lane string) (*laneState, bool) {
+	cq.mu.RLock()
+	ls, exists := cq.lanes[lane]
+	cq.mu.RUnlock()
+	return ls, exists
+}
+
 // Enqueue adds a task to the specified lane
 func (cq *CommandQueue) Enqueue(lane string, task Task, options *TaskOptions) (interface{}, error) {
 	return cq.EnqueueWithContext(context.Background(), lane, task, options)
@@ -137,6 +144,14 @@ func (cq *CommandQueue) EnqueueWithContext(ctx context.Context, lane string, tas
 	// Ensure lane exists
 	cq.ensureLane(lane)
 
+	ls, exists := cq.getLane(lane)
+	if !exists {
+		err := fmt.Errorf("lane %q not initialized", lane)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
 	// Create task record
 	cq.mu.Lock()
 	cq.taskIDSeq++
@@ -148,18 +163,21 @@ func (cq *CommandQueue) EnqueueWithContext(ctx context.Context, lane string, tas
 		opts = *options
 	}
 
+	ls.mu.Lock()
+	generation := ls.generation
+	ls.mu.Unlock()
+
 	record := &taskRecord{
 		id:         taskID,
 		task:       task,
 		ctx:        ctx,
-		generation: cq.lanes[lane].generation,
+		generation: generation,
 		enqueuedAt: time.Now(),
 		options:    opts,
 		result:     make(chan taskResult, 1),
 	}
 
 	// Add to lane queue
-	ls := cq.lanes[lane]
 	ls.mu.Lock()
 	ls.queue = append(ls.queue, record)
 	queueSize := len(ls.queue)
@@ -202,10 +220,7 @@ func (cq *CommandQueue) EnqueueWithContext(ctx context.Context, lane string, tas
 
 // ensureLane creates a lane if it doesn't exist
 func (cq *CommandQueue) ensureLane(lane string) {
-	cq.mu.RLock()
-	_, exists := cq.lanes[lane]
-	cq.mu.RUnlock()
-
+	_, exists := cq.getLane(lane)
 	if !exists {
 		cq.initLane(lane, 1)
 	}
@@ -213,7 +228,10 @@ func (cq *CommandQueue) ensureLane(lane string) {
 
 // processLane processes queued tasks for a lane
 func (cq *CommandQueue) processLane(lane string) {
-	ls := cq.lanes[lane]
+	ls, exists := cq.getLane(lane)
+	if !exists {
+		return
+	}
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 
@@ -282,7 +300,12 @@ func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 	duration := time.Since(startTime)
 
 	// Update lane state
-	ls := cq.lanes[lane]
+	ls, exists := cq.getLane(lane)
+	if !exists {
+		record.result <- taskResult{err: fmt.Errorf("lane %q missing during execution", lane)}
+		close(record.result)
+		return
+	}
 	ls.mu.Lock()
 	ls.running--
 	delete(ls.activeIDs, record.id)
@@ -335,7 +358,10 @@ func (cq *CommandQueue) startWarnTimer(record *taskRecord, lane string) {
 	select {
 	case <-timer.C:
 		// Check if task is still queued
-		ls := cq.lanes[lane]
+		ls, exists := cq.getLane(lane)
+		if !exists {
+			return
+		}
 		ls.mu.Lock()
 		queuePos := -1
 		for i, r := range ls.queue {
@@ -477,7 +503,10 @@ func (cq *CommandQueue) ResetLane(lane string) {
 func (cq *CommandQueue) SetConcurrency(lane string, concurrency int) {
 	cq.ensureLane(lane)
 
-	ls := cq.lanes[lane]
+	ls, exists := cq.getLane(lane)
+	if !exists {
+		return
+	}
 	ls.mu.Lock()
 	oldMax := ls.concurrency
 	ls.concurrency = concurrency
