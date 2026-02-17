@@ -24,7 +24,6 @@ func (p *GeminiProvider) Provider() string {
 
 // Call makes an API call to Google Gemini
 func (p *GeminiProvider) Call(ctx context.Context, request LLMRequest) (*LLMResponse, error) {
-	// TODO: Implement Gemini API integration
-	// For now, return not implemented error
+	// Gemini integration is not available yet in this provider.
 	return nil, fmt.Errorf("gemini provider not yet implemented - use anthropic or openai")
 }

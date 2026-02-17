@@ -119,6 +119,7 @@ type Client struct {
 	ID            string
 	Conn          *websocket.Conn
 	writeMu       sync.Mutex
+	authMu        sync.RWMutex
 	Authenticated bool
 	Challenge     string
 	ConnectedAt   time.Time
@@ -141,4 +142,18 @@ func (c *Client) WriteMessage(messageType int, data []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	return c.Conn.WriteMessage(messageType, data)
+}
+
+// SetAuthenticated updates authentication state safely.
+func (c *Client) SetAuthenticated(authenticated bool) {
+	c.authMu.Lock()
+	c.Authenticated = authenticated
+	c.authMu.Unlock()
+}
+
+// IsAuthenticated reads authentication state safely.
+func (c *Client) IsAuthenticated() bool {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return c.Authenticated
 }

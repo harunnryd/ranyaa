@@ -73,7 +73,7 @@ func (a *AuthHandler) HandleAuthResponse(client *Client, signature string) AuthR
 	}
 
 	// Authentication successful
-	client.Authenticated = true
+	client.SetAuthenticated(true)
 	client.State = StateAuthenticated
 	client.AuthAttempts = 0
 	client.Challenge = "" // Clear challenge

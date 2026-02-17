@@ -352,7 +352,7 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 	}
 
 	// Check authentication
-	if !client.Authenticated {
+	if !client.IsAuthenticated() {
 		s.sendError(client, "", AuthenticationRequired, "Authentication required")
 		return
 	}

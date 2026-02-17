@@ -105,7 +105,7 @@ func (l *PluginLoader) LoadPlugin(discovered DiscoveredPlugin, config map[string
 	)
 
 	// Activate plugin
-	if err := pluginClient.Activate(context.TODO(), api, config); err != nil {
+	if err := pluginClient.Activate(context.Background(), api, config); err != nil {
 		client.Kill()
 		return nil, fmt.Errorf("failed to activate plugin: %w", err)
 	}
@@ -129,7 +129,7 @@ func (l *PluginLoader) UnloadPlugin(pluginID string) error {
 
 	// Deactivate plugin
 	if record.Plugin.Client != nil {
-		if err := record.Plugin.Client.Deactivate(context.TODO()); err != nil {
+		if err := record.Plugin.Client.Deactivate(context.Background()); err != nil {
 			l.logger.Warn().Err(err).Str("plugin", pluginID).Msg("Failed to deactivate plugin")
 		}
 	}

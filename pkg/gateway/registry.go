@@ -62,7 +62,7 @@ func (r *ClientRegistry) GetAuthenticatedClients() []*Client {
 
 	clients := make([]*Client, 0)
 	for _, client := range r.clients {
-		if client.Authenticated {
+		if client.IsAuthenticated() {
 			clients = append(clients, client)
 		}
 	}
@@ -90,7 +90,7 @@ func (r *ClientRegistry) GetConnectedClients() []ClientInfo {
 
 		infos = append(infos, ClientInfo{
 			ID:            client.ID,
-			Authenticated: client.Authenticated,
+			Authenticated: client.IsAuthenticated(),
 			ConnectedAt:   client.ConnectedAt,
 			LastActivity:  client.LastActivity,
 			IPAddress:     client.IPAddress,

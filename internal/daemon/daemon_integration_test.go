@@ -605,6 +605,47 @@ func TestIntegrationGatewayTypedStreamingEvents(t *testing.T) {
 	}
 }
 
+func TestIntegrationToolRetryTransientError(t *testing.T) {
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "retry_probe_tool", Parameters: map[string]interface{}{}}}},
+			{Content: "step-1 complete"},
+			{Content: "retry-complete"},
+		},
+	}
+	d := createIntegrationDaemon(t, provider, false)
+
+	var attempts atomic.Int32
+	require.NoError(t, d.toolExecutor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "retry_probe_tool",
+		Description: "Tool used to verify transient retries in integration flow",
+		Category:    toolexecutor.CategoryRead,
+		Parameters:  []toolexecutor.ToolParameter{},
+		Handler: func(context.Context, map[string]interface{}) (interface{}, error) {
+			if attempts.Add(1) == 1 {
+				return nil, fmt.Errorf("i/o timeout while contacting dependency")
+			}
+			return map[string]interface{}{"ok": true}, nil
+		},
+	}))
+
+	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "run retry probe tool",
+		"sessionKey": "integration:tool-retry",
+		"config": map[string]interface{}{
+			"model": "integration-model",
+			"tools": []interface{}{"retry_probe_tool"},
+		},
+	})
+	require.Nil(t, rpcResp.Error)
+
+	resultMap, ok := rpcResp.Result.(map[string]interface{})
+	require.True(t, ok, "expected map result")
+	response, _ := resultMap["response"].(string)
+	assert.Equal(t, "retry-complete", response)
+	assert.Equal(t, int32(2), attempts.Load(), "transient tool failure must be retried once before succeeding")
+}
+
 func TestIntegrationGatewayLifecycleTickEvents(t *testing.T) {
 	d := createIntegrationDaemon(t, nil, false)
 
