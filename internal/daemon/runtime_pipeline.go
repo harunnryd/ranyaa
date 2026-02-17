@@ -77,7 +77,7 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 
 	ctx = tracing.WithSessionKey(ctx, req.SessionKey)
 
-	agentCfg, err := d.resolveAgentConfig(req.AgentID)
+	agentCfg, err := d.resolveAgentConfig(req)
 	if err != nil {
 		return agent.AgentResult{}, nil, err
 	}
@@ -215,26 +215,134 @@ func (d *Daemon) dispatchPlannedStep(
 	return result, nil
 }
 
-func (d *Daemon) resolveAgentConfig(agentID string) (config.AgentConfig, error) {
+func (d *Daemon) resolveAgentConfig(req RuntimeRequest) (config.AgentConfig, error) {
 	if len(d.config.Agents) == 0 {
 		return config.AgentConfig{}, fmt.Errorf("no agents configured")
 	}
 
-	if agentID == "" {
-		agentID = "default"
-	}
-
-	for _, cfg := range d.config.Agents {
-		if cfg.ID == agentID {
-			return cfg, nil
+	requestedAgentID := strings.TrimSpace(req.AgentID)
+	if requestedAgentID == "" {
+		if autoID := d.selectTieredAgentID(req); autoID != "" {
+			if cfg, ok := d.findAgentConfig(autoID); ok {
+				return cfg, nil
+			}
 		}
-	}
-
-	if agentID == "default" {
 		return d.config.Agents[0], nil
 	}
 
-	return config.AgentConfig{}, fmt.Errorf("agent %s not found", agentID)
+	if requestedAgentID == "default" {
+		if cfg, ok := d.findAgentConfig("default"); ok {
+			return cfg, nil
+		}
+		return d.config.Agents[0], nil
+	}
+
+	if cfg, ok := d.findAgentConfig(requestedAgentID); ok {
+		return cfg, nil
+	}
+
+	return config.AgentConfig{}, fmt.Errorf("agent %s not found", requestedAgentID)
+}
+
+func (d *Daemon) findAgentConfig(agentID string) (config.AgentConfig, bool) {
+	for _, cfg := range d.config.Agents {
+		if cfg.ID == agentID {
+			return cfg, true
+		}
+	}
+	return config.AgentConfig{}, false
+}
+
+func (d *Daemon) findAgentByRole(role string) (config.AgentConfig, bool) {
+	for _, cfg := range d.config.Agents {
+		if strings.EqualFold(strings.TrimSpace(cfg.Role), role) {
+			return cfg, true
+		}
+	}
+	return config.AgentConfig{}, false
+}
+
+func (d *Daemon) selectTieredAgentID(req RuntimeRequest) string {
+	prompt := strings.ToLower(strings.TrimSpace(req.Prompt))
+	hasTools := len(req.RunConfig.Tools) > 0
+
+	if captain, ok := d.findAgentByRole("captain"); ok {
+		if shouldRouteToCaptain(prompt, hasTools) {
+			return captain.ID
+		}
+	}
+
+	if executor, ok := d.findAgentByRole("executor"); ok {
+		if shouldRouteToExecutor(prompt, hasTools) {
+			return executor.ID
+		}
+	}
+
+	if critic, ok := d.findAgentByRole("critic"); ok {
+		if shouldRouteToCritic(prompt, hasTools) {
+			return critic.ID
+		}
+	}
+
+	if general, ok := d.findAgentByRole("general"); ok {
+		return general.ID
+	}
+
+	return ""
+}
+
+func shouldRouteToCaptain(prompt string, hasTools bool) bool {
+	if prompt == "" {
+		return false
+	}
+
+	if hasTools && (strings.Contains(prompt, "plan") || strings.Contains(prompt, "strategy") || strings.Contains(prompt, "coordinate")) {
+		return true
+	}
+	if len(prompt) > 280 {
+		return true
+	}
+
+	markers := []string{" then ", " and then ", " after that ", " finally ", "\n1.", "\n- "}
+	for _, marker := range markers {
+		if strings.Contains(prompt, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func shouldRouteToExecutor(prompt string, hasTools bool) bool {
+	if hasTools {
+		return true
+	}
+
+	markers := []string{"execute", "run", "build", "implement", "apply", "fix", "create"}
+	for _, marker := range markers {
+		if strings.Contains(prompt, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldRouteToCritic(prompt string, hasTools bool) bool {
+	if hasTools || prompt == "" {
+		return false
+	}
+
+	if len(prompt) <= 140 && !strings.Contains(prompt, "\n") {
+		return true
+	}
+
+	markers := []string{"review", "critique", "refactor", "improve", "format", "summarize"}
+	for _, marker := range markers {
+		if strings.Contains(prompt, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeRunConfig(base config.AgentConfig, override agent.AgentConfig) agent.AgentConfig {

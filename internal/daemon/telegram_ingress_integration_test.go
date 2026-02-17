@@ -164,6 +164,7 @@ func TestTelegramIngressMessageDeduplicationIntegration(t *testing.T) {
 			StreamMode:       "off",
 		},
 		nil,
+		nil,
 		zerolog.Nop(),
 	).(*telegramIngressChannel)
 
@@ -224,6 +225,7 @@ func TestTelegramIngressStreamingIntegrationEmitsMultipleUpdatesBeforeFinal(t *t
 			StreamMinChars:    8,
 		},
 		subscribe,
+		nil,
 		zerolog.Nop(),
 	).(*telegramIngressChannel)
 
@@ -296,6 +298,97 @@ func TestTelegramIngressStreamingIntegrationEmitsMultipleUpdatesBeforeFinal(t *t
 	assert.True(t, foundPartial, "expected at least one partial update before final")
 }
 
+func TestTelegramIngressBlockStreamingIntegrationEmitsBlockUpdatesBeforeFinal(t *testing.T) {
+	bot, _, fakeAPI := newTelegramTestBot(t)
+
+	eventCh := make(chan agent.RuntimeEvent, 16)
+	var closeOnce sync.Once
+	subscribe := func(_ string) (<-chan agent.RuntimeEvent, func()) {
+		return eventCh, func() {
+			closeOnce.Do(func() {
+				close(eventCh)
+			})
+		}
+	}
+
+	finalResponse := "First sentence. Second sentence. Final sentence."
+	channel := newTelegramIngressChannel(
+		bot,
+		nil,
+		config.TelegramConfig{
+			DMPolicy:          "open",
+			DedupeTTLSeconds:  300,
+			StreamMode:        "block",
+			StreamMinInterval: 10,
+			StreamMinChars:    5,
+		},
+		subscribe,
+		nil,
+		zerolog.Nop(),
+	).(*telegramIngressChannel)
+
+	err := channel.Start(context.Background(), func(_ context.Context, _ channels.InboundMessage) (interface{}, error) {
+		eventCh <- agent.RuntimeEvent{
+			Event:   "assistant",
+			Stream:  agent.RuntimeStreamAssistant,
+			Phase:   "output",
+			Content: "First sentence. ",
+		}
+		time.Sleep(10 * time.Millisecond)
+		eventCh <- agent.RuntimeEvent{
+			Event:   "assistant",
+			Stream:  agent.RuntimeStreamAssistant,
+			Phase:   "output",
+			Content: "Second sentence. ",
+		}
+		time.Sleep(10 * time.Millisecond)
+		eventCh <- agent.RuntimeEvent{
+			Event:   "assistant",
+			Stream:  agent.RuntimeStreamAssistant,
+			Phase:   "output",
+			Content: "Final sentence.",
+		}
+		closeOnce.Do(func() {
+			close(eventCh)
+		})
+		return agent.AgentResult{Response: finalResponse}, nil
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = channel.Stop(context.Background())
+	})
+
+	update := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			MessageID: 88,
+			From: &tgbotapi.User{
+				ID:       2101,
+				UserName: "blockstreamer",
+			},
+			Chat: &tgbotapi.Chat{
+				ID:   555003,
+				Type: "private",
+			},
+			Text: "block stream please",
+			Date: int(time.Now().Unix()),
+		},
+	}
+
+	require.NoError(t, channel.handler.HandleMessage(update))
+
+	calls := fakeAPI.snapshot()
+	editTexts := make([]string, 0)
+	for _, call := range calls {
+		if call.Method == "editMessageText" {
+			editTexts = append(editTexts, call.Text)
+		}
+	}
+
+	require.GreaterOrEqual(t, len(editTexts), 2, "expected block partial and final edit updates")
+	assert.Equal(t, finalResponse, editTexts[len(editTexts)-1], "last edit must be final response")
+	assert.Contains(t, editTexts[0], "First sentence.", "first block update should include first sentence boundary")
+}
+
 func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 	bot, commands, fakeAPI := newTelegramTestBot(t)
 	channel := newTelegramIngressChannel(
@@ -308,6 +401,7 @@ func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 			PairingPrompt:      "Pair first with /pair",
 			PairingSuccessText: "Paired successfully",
 		},
+		nil,
 		nil,
 		zerolog.Nop(),
 	).(*telegramIngressChannel)
@@ -372,5 +466,95 @@ func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 	}
 	assert.Contains(t, texts, "Pair first with /pair")
 	assert.Contains(t, texts, "Paired successfully")
+	assert.Contains(t, texts, "processed")
+}
+
+func TestTelegramIngressResetWorkflowIntegration(t *testing.T) {
+	bot, commands, fakeAPI := newTelegramTestBot(t)
+
+	cleared := make([]string, 0, 2)
+	var clearedMu sync.Mutex
+	clearSession := func(sessionKey string) error {
+		clearedMu.Lock()
+		cleared = append(cleared, sessionKey)
+		clearedMu.Unlock()
+		return nil
+	}
+
+	channel := newTelegramIngressChannel(
+		bot,
+		commands,
+		config.TelegramConfig{
+			DMPolicy:         "open",
+			DedupeTTLSeconds: 300,
+			StreamMode:       "off",
+		},
+		nil,
+		clearSession,
+		zerolog.Nop(),
+	).(*telegramIngressChannel)
+
+	var dispatchCount atomic.Int32
+	err := channel.Start(context.Background(), func(_ context.Context, _ channels.InboundMessage) (interface{}, error) {
+		dispatchCount.Add(1)
+		return agent.AgentResult{Response: "processed"}, nil
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = channel.Stop(context.Background())
+	})
+
+	privateChat := &tgbotapi.Chat{ID: 888001, Type: "private"}
+	fromUser := &tgbotapi.User{ID: 4001, UserName: "resetuser"}
+
+	require.NoError(t, channel.handler.HandleMessage(tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			MessageID: 201,
+			From:      fromUser,
+			Chat:      privateChat,
+			Text:      "hello first",
+			Date:      int(time.Now().Unix()),
+		},
+	}))
+	assert.Equal(t, int32(1), dispatchCount.Load(), "initial message should be dispatched")
+
+	require.NoError(t, commands.HandleCommand(tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			MessageID: 202,
+			From:      fromUser,
+			Chat:      privateChat,
+			Text:      "/new",
+			Date:      int(time.Now().Unix()),
+			Entities: []tgbotapi.MessageEntity{
+				{Type: "bot_command", Offset: 0, Length: 4},
+			},
+		},
+	}))
+	assert.Equal(t, int32(1), dispatchCount.Load(), "reset trigger must not dispatch an agent run")
+
+	require.NoError(t, channel.handler.HandleMessage(tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			MessageID: 203,
+			From:      fromUser,
+			Chat:      privateChat,
+			Text:      "hello again",
+			Date:      int(time.Now().Unix()),
+		},
+	}))
+	assert.Equal(t, int32(2), dispatchCount.Load(), "message after reset should dispatch")
+
+	clearedMu.Lock()
+	clearedCopy := append([]string{}, cleared...)
+	clearedMu.Unlock()
+	require.Equal(t, []string{"telegram:888001"}, clearedCopy, "session should be cleared exactly once")
+
+	calls := fakeAPI.snapshot()
+	var texts []string
+	for _, call := range calls {
+		if call.Method == "sendMessage" {
+			texts = append(texts, call.Text)
+		}
+	}
+	assert.Contains(t, texts, "✨ New conversation started.")
 	assert.Contains(t, texts, "processed")
 }

@@ -9,12 +9,14 @@ import (
 
 const (
 	DefaultCleanupAge = 7 * 24 * time.Hour // 7 days
+	DefaultMaxEntries = 500
 )
 
 // Cleanup handles session cleanup
 type Cleanup struct {
 	manager    *SessionManager
 	cleanupAge time.Duration
+	maxEntries int
 	stopCh     chan struct{}
 	running    bool
 }
@@ -28,6 +30,7 @@ func NewCleanup(manager *SessionManager, cleanupAge time.Duration) *Cleanup {
 	return &Cleanup{
 		manager:    manager,
 		cleanupAge: cleanupAge,
+		maxEntries: DefaultMaxEntries,
 		stopCh:     make(chan struct{}),
 	}
 }
@@ -95,6 +98,13 @@ func (c *Cleanup) cleanupOldSessions() error {
 	deleted := 0
 
 	for _, sessionKey := range sessions {
+		if err := c.pruneSession(sessionKey); err != nil {
+			log.Warn().
+				Str("session_key", sessionKey).
+				Err(err).
+				Msg("Failed to prune session")
+		}
+
 		// Only cleanup archived sessions
 		if !isArchivedSession(sessionKey) {
 			continue
@@ -143,6 +153,34 @@ func (c *Cleanup) cleanupOldSessions() error {
 	return nil
 }
 
+func (c *Cleanup) pruneSession(sessionKey string) error {
+	if c.maxEntries <= 0 {
+		return nil
+	}
+
+	entries, err := c.manager.LoadSession(sessionKey)
+	if err != nil {
+		return err
+	}
+
+	if len(entries) <= c.maxEntries {
+		return nil
+	}
+
+	pruned := entries[len(entries)-c.maxEntries:]
+	if err := c.manager.ReplaceSession(sessionKey, pruned); err != nil {
+		return err
+	}
+
+	log.Debug().
+		Str("session_key", sessionKey).
+		Int("from_entries", len(entries)).
+		Int("to_entries", len(pruned)).
+		Msg("Session pruned")
+
+	return nil
+}
+
 // IsRunning returns whether the cleanup is running
 func (c *Cleanup) IsRunning() bool {
 	return c.running
@@ -157,6 +195,17 @@ func (c *Cleanup) GetCleanupAge() time.Duration {
 func (c *Cleanup) SetCleanupAge(age time.Duration) {
 	c.cleanupAge = age
 	log.Info().Dur("cleanup_age", age).Msg("Cleanup age updated")
+}
+
+// GetMaxEntries returns max entries retained per session after pruning.
+func (c *Cleanup) GetMaxEntries() int {
+	return c.maxEntries
+}
+
+// SetMaxEntries sets max entries retained per session after pruning.
+func (c *Cleanup) SetMaxEntries(maxEntries int) {
+	c.maxEntries = maxEntries
+	log.Info().Int("max_entries", maxEntries).Msg("Session pruning max entries updated")
 }
 
 // CleanupNow immediately runs cleanup

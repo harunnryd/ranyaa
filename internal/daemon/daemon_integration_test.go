@@ -646,6 +646,68 @@ func TestIntegrationToolRetryTransientError(t *testing.T) {
 	assert.Equal(t, int32(2), attempts.Load(), "transient tool failure must be retried once before succeeding")
 }
 
+func TestIntegrationGatewayReasoningStreamEvents(t *testing.T) {
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{ToolCalls: []agent.ToolCall{{ID: "tool-1", Name: "reason_probe_tool", Parameters: map[string]interface{}{}}}},
+			{Content: "reasoning-complete"},
+		},
+	}
+	d := createIntegrationDaemon(t, provider, false)
+
+	require.NoError(t, d.toolExecutor.RegisterTool(toolexecutor.ToolDefinition{
+		Name:        "reason_probe_tool",
+		Description: "Tool used to trigger reasoning stream events",
+		Category:    toolexecutor.CategoryRead,
+		Parameters:  []toolexecutor.ToolParameter{},
+		Handler: func(context.Context, map[string]interface{}) (interface{}, error) {
+			return map[string]interface{}{"ok": true}, nil
+		},
+	}))
+
+	wsConn := connectAuthenticatedGatewaySocket(t, d)
+	defer wsConn.Close()
+
+	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "reason about using a tool before responding",
+		"sessionKey": "integration:reasoning-stream",
+		"config": map[string]interface{}{
+			"model": "integration-model",
+			"tools": []interface{}{"reason_probe_tool"},
+		},
+	})
+	require.Nil(t, rpcResp.Error)
+
+	var events []gateway.EventMessage
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		var evt gateway.EventMessage
+		_ = wsConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		err := wsConn.ReadJSON(&evt)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if hasTypedEvent(events, gateway.StreamTypeReasoning, "output") &&
+					hasTypedEvent(events, gateway.StreamTypeAssistant, "output") {
+					break
+				}
+				continue
+			}
+			require.NoError(t, err)
+		}
+
+		if evt.Type == "event" && evt.Stream != "" {
+			events = append(events, evt)
+			if hasTypedEvent(events, gateway.StreamTypeReasoning, "output") &&
+				hasTypedEvent(events, gateway.StreamTypeAssistant, "output") {
+				break
+			}
+		}
+	}
+
+	assert.True(t, hasTypedEvent(events, gateway.StreamTypeReasoning, "output"), "missing reasoning:output event")
+	assert.True(t, hasTypedEvent(events, gateway.StreamTypeAssistant, "output"), "missing assistant:output event")
+}
+
 func TestIntegrationGatewayLifecycleTickEvents(t *testing.T) {
 	d := createIntegrationDaemon(t, nil, false)
 
@@ -801,6 +863,154 @@ func TestIntegrationMultiChannelRoutingByChannelBinding(t *testing.T) {
 	defer mu.Unlock()
 	assert.Contains(t, calledWith, "model-gateway")
 	assert.Contains(t, calledWith, "model-telegram")
+}
+
+func TestIntegrationModelTieringSelectsRoleSpecificModels(t *testing.T) {
+	origNewAgentRunner := newAgentRunner
+
+	var (
+		mu         sync.Mutex
+		calledWith []string
+	)
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{Content: "critic-ok"},
+			{Content: "captain-ok"},
+			{Content: "executor-ok"},
+		},
+		onCall: func(req agent.LLMRequest) {
+			mu.Lock()
+			calledWith = append(calledWith, req.Model)
+			mu.Unlock()
+		},
+	}
+
+	newAgentRunner = func(cfg agent.Config) (*agent.Runner, error) {
+		cfg.ProviderFactory = fixedProviderFactory{provider: provider}
+		return agent.NewRunner(cfg)
+	}
+	t.Cleanup(func() {
+		newAgentRunner = origNewAgentRunner
+	})
+
+	tmpDir := t.TempDir()
+	workspacePath := filepath.Join(tmpDir, "workspace")
+	require.NoError(t, os.MkdirAll(workspacePath, 0755))
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tmpDir
+	cfg.WorkspacePath = workspacePath
+	cfg.Channels.Telegram.Enabled = false
+	cfg.Webhook.Enabled = false
+	cfg.Gateway.Port = reservePort(t)
+	cfg.Gateway.SharedSecret = "integration-secret"
+	cfg.Gateway.TickInterval = 200
+	cfg.AI.Profiles = []config.AIProfile{{
+		ID:       "integration-profile",
+		Provider: "anthropic",
+		APIKey:   "sk-ant-integration",
+		Priority: 1,
+	}}
+	cfg.Agents = []config.AgentConfig{
+		{
+			ID:           "captain",
+			Name:         "Captain",
+			Role:         "captain",
+			Model:        "model-captain",
+			Temperature:  0.7,
+			MaxTokens:    4096,
+			SystemPrompt: "Captain prompt",
+			Tools: config.ToolPolicyConfig{
+				Allow: []string{"*"},
+				Deny:  []string{},
+			},
+			Sandbox: config.SandboxConfig{
+				Mode:    "tools",
+				Scope:   "session",
+				Runtime: "host",
+			},
+		},
+		{
+			ID:           "executor",
+			Name:         "Executor",
+			Role:         "executor",
+			Model:        "model-executor",
+			Temperature:  0.7,
+			MaxTokens:    4096,
+			SystemPrompt: "Executor prompt",
+			Tools: config.ToolPolicyConfig{
+				Allow: []string{"*"},
+				Deny:  []string{},
+			},
+			Sandbox: config.SandboxConfig{
+				Mode:    "tools",
+				Scope:   "session",
+				Runtime: "host",
+			},
+		},
+		{
+			ID:           "critic",
+			Name:         "Critic",
+			Role:         "critic",
+			Model:        "model-critic",
+			Temperature:  0.7,
+			MaxTokens:    4096,
+			SystemPrompt: "Critic prompt",
+			Tools: config.ToolPolicyConfig{
+				Allow: []string{"*"},
+				Deny:  []string{},
+			},
+			Sandbox: config.SandboxConfig{
+				Mode:    "tools",
+				Scope:   "session",
+				Runtime: "host",
+			},
+		},
+	}
+
+	log, err := logger.New(logger.Config{Level: "debug", Console: false})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = log.Close()
+	})
+
+	d, err := New(cfg, log)
+	require.NoError(t, err)
+	require.NoError(t, d.Start())
+	t.Cleanup(func() {
+		_ = d.Stop()
+	})
+
+	respCritic := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "review and summarize this quickly",
+		"sessionKey": "tier:critic",
+	})
+	require.Nil(t, respCritic.Error)
+
+	respCaptain := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "plan this migration and then finally produce rollout phases",
+		"sessionKey": "tier:captain",
+	})
+	require.Nil(t, respCaptain.Error)
+
+	respExecutor := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "execute build pipeline for release artifacts",
+		"sessionKey": "tier:executor",
+	})
+	require.Nil(t, respExecutor.Error)
+
+	waitForCondition(t, 2*time.Second, "tiered model selections captured", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(calledWith) >= 3
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.GreaterOrEqual(t, len(calledWith), 3)
+	assert.Contains(t, calledWith, "model-critic")
+	assert.Contains(t, calledWith, "model-captain")
+	assert.Contains(t, calledWith, "model-executor")
 }
 
 func hasTypedEvent(events []gateway.EventMessage, stream gateway.StreamType, phase string) bool {

@@ -60,6 +60,7 @@ type telegramIngressChannel struct {
 	logger          zerolog.Logger
 	handler         *telegram.Handler
 	commands        *telegram.Commands
+	clearSession    func(sessionKey string) error
 	dedupe          *messageDedupeCache
 	pairing         *telegramPairingStore
 	dmPolicy        string
@@ -68,6 +69,7 @@ type telegramIngressChannel struct {
 	streamMinPeriod time.Duration
 	pairingPrompt   string
 	pairingSuccess  string
+	resetSuccess    string
 	subscribeEvents runtimeEventSubscriber
 }
 
@@ -78,6 +80,7 @@ func newTelegramIngressChannel(
 	commands *telegram.Commands,
 	cfg config.TelegramConfig,
 	subscribe runtimeEventSubscriber,
+	clearSession func(sessionKey string) error,
 	logger zerolog.Logger,
 ) channels.Channel {
 	dedupeTTL := time.Duration(cfg.DedupeTTLSeconds) * time.Second
@@ -118,6 +121,7 @@ func newTelegramIngressChannel(
 		bot:             bot,
 		logger:          logger.With().Str("component", "channels.telegram").Logger(),
 		commands:        commands,
+		clearSession:    clearSession,
 		dedupe:          newMessageDedupeCache(dedupeTTL),
 		pairing:         newTelegramPairingStore(cfg.Allowlist),
 		dmPolicy:        policy,
@@ -126,6 +130,7 @@ func newTelegramIngressChannel(
 		streamMinPeriod: minPeriod,
 		pairingPrompt:   pairingPrompt,
 		pairingSuccess:  pairingSuccess,
+		resetSuccess:    "✨ New conversation started.",
 		subscribeEvents: subscribe,
 	}
 }
@@ -147,6 +152,8 @@ func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.Disp
 	}
 	if c.commands != nil {
 		c.commands.Register("pair", c.handlePairCommand)
+		c.commands.Register("new", c.handleResetCommand)
+		c.commands.Register("reset", c.handleResetCommand)
 	}
 
 	handler := telegram.NewHandler(c.bot)
@@ -155,9 +162,10 @@ func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.Disp
 		if content == "" {
 			return nil
 		}
+		command := firstTelegramToken(content)
 
 		peerID := strconv.FormatInt(msgCtx.ChatID, 10)
-		if strings.EqualFold(content, "/pair") {
+		if strings.EqualFold(command, "/pair") {
 			return c.handlePairMessage(handler, msgCtx)
 		}
 		if !c.isAllowedPeer(peerID) {
@@ -166,6 +174,9 @@ func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.Disp
 				return nil
 			}
 			return handler.SendResponse(msgCtx, denied)
+		}
+		if isResetTrigger(command) {
+			return c.handleResetMessage(handler, msgCtx)
 		}
 
 		msgKey := fmt.Sprintf("telegram:%d:%d", msgCtx.ChatID, msgCtx.MessageID)
@@ -256,6 +267,23 @@ func (c *telegramIngressChannel) handlePairCommand(cmdCtx telegram.CommandContex
 	}
 }
 
+func (c *telegramIngressChannel) handleResetCommand(cmdCtx telegram.CommandContext) error {
+	peerID := strconv.FormatInt(cmdCtx.ChatID, 10)
+	if !c.isAllowedPeer(peerID) {
+		denied := c.deniedAccessMessage()
+		if denied == "" {
+			return nil
+		}
+		return c.commands.SendResponse(cmdCtx, denied)
+	}
+
+	sessionKey := fmt.Sprintf("telegram:%d", cmdCtx.ChatID)
+	if err := c.resetSession(sessionKey); err != nil {
+		return c.commands.SendResponse(cmdCtx, fmt.Sprintf("Failed to reset conversation: %v", err))
+	}
+	return c.commands.SendResponse(cmdCtx, c.resetSuccess)
+}
+
 func (c *telegramIngressChannel) handlePairMessage(handler *telegram.Handler, msgCtx telegram.MessageContext) error {
 	switch c.dmPolicy {
 	case "disabled":
@@ -278,6 +306,21 @@ func (c *telegramIngressChannel) handlePairMessage(handler *telegram.Handler, ms
 	}
 }
 
+func (c *telegramIngressChannel) handleResetMessage(handler *telegram.Handler, msgCtx telegram.MessageContext) error {
+	sessionKey := fmt.Sprintf("telegram:%d", msgCtx.ChatID)
+	if err := c.resetSession(sessionKey); err != nil {
+		return handler.SendResponse(msgCtx, fmt.Sprintf("Failed to reset conversation: %v", err))
+	}
+	return handler.SendResponse(msgCtx, c.resetSuccess)
+}
+
+func (c *telegramIngressChannel) resetSession(sessionKey string) error {
+	if c.clearSession == nil {
+		return nil
+	}
+	return c.clearSession(sessionKey)
+}
+
 func (c *telegramIngressChannel) deniedAccessMessage() string {
 	switch c.dmPolicy {
 	case "disabled":
@@ -288,6 +331,23 @@ func (c *telegramIngressChannel) deniedAccessMessage() string {
 		return ""
 	default:
 		return c.pairingPrompt
+	}
+}
+
+func firstTelegramToken(content string) string {
+	fields := strings.Fields(strings.TrimSpace(content))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(fields[0])
+}
+
+func isResetTrigger(token string) bool {
+	switch strings.ToLower(strings.TrimSpace(token)) {
+	case "/new", "/reset":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -307,6 +367,7 @@ func (c *telegramIngressChannel) isAllowedPeer(peerID string) bool {
 type telegramRuntimeStream struct {
 	chatID      int64
 	messageID   int
+	mode        string
 	minChars    int
 	minInterval time.Duration
 
@@ -345,6 +406,7 @@ func (c *telegramIngressChannel) startStream(chatID int64, sessionKey string) *t
 	stream := &telegramRuntimeStream{
 		chatID:      chatID,
 		messageID:   initial.MessageID,
+		mode:        c.streamMode,
 		minChars:    c.streamMinChars,
 		minInterval: c.streamMinPeriod,
 		events:      events,
@@ -383,15 +445,15 @@ func (c *telegramIngressChannel) streamToTelegram(stream *telegramRuntimeStream)
 	for {
 		select {
 		case <-stream.stopCh:
-			c.flushStream(stream)
+			c.flushStream(stream, true, true)
 			return
 		case <-ticker.C:
 			if stream.buffer.Len()-stream.sentChars > 0 {
-				c.flushStream(stream)
+				c.flushStream(stream, false, true)
 			}
 		case evt, ok := <-stream.events:
 			if !ok {
-				c.flushStream(stream)
+				c.flushStream(stream, true, true)
 				return
 			}
 			if evt.Stream != agent.RuntimeStreamAssistant || evt.Phase != "output" {
@@ -401,14 +463,26 @@ func (c *telegramIngressChannel) streamToTelegram(stream *telegramRuntimeStream)
 				continue
 			}
 			stream.buffer.WriteString(evt.Content)
+			if stream.mode == "block" {
+				c.flushStream(stream, false, false)
+				continue
+			}
 			if stream.buffer.Len()-stream.sentChars >= stream.minChars {
-				c.flushStream(stream)
+				c.flushStream(stream, false, false)
 			}
 		}
 	}
 }
 
-func (c *telegramIngressChannel) flushStream(stream *telegramRuntimeStream) {
+func (c *telegramIngressChannel) flushStream(stream *telegramRuntimeStream, force bool, fromTicker bool) {
+	if stream.mode == "block" {
+		c.flushStreamBlock(stream, force, fromTicker)
+		return
+	}
+	c.flushStreamPartial(stream)
+}
+
+func (c *telegramIngressChannel) flushStreamPartial(stream *telegramRuntimeStream) {
 	content := strings.TrimSpace(stream.buffer.String())
 	if content == "" {
 		return
@@ -424,6 +498,73 @@ func (c *telegramIngressChannel) flushStream(stream *telegramRuntimeStream) {
 		return
 	}
 	stream.sentChars = len(content)
+}
+
+func (c *telegramIngressChannel) flushStreamBlock(stream *telegramRuntimeStream, force bool, fromTicker bool) {
+	raw := stream.buffer.String()
+	if strings.TrimSpace(raw) == "" {
+		return
+	}
+	if len(raw) <= stream.sentChars {
+		return
+	}
+
+	cutoff := len(raw)
+	if !force {
+		segment := raw[stream.sentChars:]
+		boundary := findBlockBoundaryOffset(segment)
+		if boundary <= 0 {
+			if !fromTicker {
+				return
+			}
+			if len(segment) < stream.minChars {
+				return
+			}
+			cutoff = len(raw)
+		} else {
+			if !fromTicker && boundary < stream.minChars {
+				return
+			}
+			cutoff = stream.sentChars + boundary
+		}
+	}
+
+	content := strings.TrimSpace(raw[:cutoff])
+	if content == "" {
+		stream.sentChars = cutoff
+		return
+	}
+
+	if err := c.bot.EditMessage(stream.chatID, stream.messageID, content); err != nil {
+		if strings.Contains(err.Error(), "message is not modified") {
+			stream.sentChars = cutoff
+			return
+		}
+		c.logger.Warn().Err(err).Int64("chat_id", stream.chatID).Int("message_id", stream.messageID).Msg("Failed to update Telegram stream message")
+		return
+	}
+
+	stream.sentChars = cutoff
+}
+
+func findBlockBoundaryOffset(text string) int {
+	if text == "" {
+		return 0
+	}
+
+	delimiters := []string{"\n\n", "\n", ". ", "! ", "? "}
+	best := 0
+	for _, delim := range delimiters {
+		idx := strings.LastIndex(text, delim)
+		if idx < 0 {
+			continue
+		}
+		end := idx + len(delim)
+		if end > best {
+			best = end
+		}
+	}
+	return best
 }
 
 func channelResponseText(result interface{}) string {

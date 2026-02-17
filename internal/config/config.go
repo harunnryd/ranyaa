@@ -51,7 +51,7 @@ type TelegramConfig struct {
 	DMPolicy           string  `json:"dm_policy" mapstructure:"dm_policy"` // pairing, allowlist, open, disabled
 	Allowlist          []int64 `json:"allowlist" mapstructure:"allowlist"`
 	DedupeTTLSeconds   int     `json:"dedupe_ttl_seconds" mapstructure:"dedupe_ttl_seconds"`
-	StreamMode         string  `json:"stream_mode" mapstructure:"stream_mode"` // off, partial
+	StreamMode         string  `json:"stream_mode" mapstructure:"stream_mode"` // off, partial, block
 	StreamMinInterval  int     `json:"stream_min_interval_ms" mapstructure:"stream_min_interval_ms"`
 	StreamMinChars     int     `json:"stream_min_chars" mapstructure:"stream_min_chars"`
 	APIEndpoint        string  `json:"api_endpoint,omitempty" mapstructure:"api_endpoint"`

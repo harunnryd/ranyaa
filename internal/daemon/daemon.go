@@ -495,6 +495,7 @@ func (d *Daemon) initializeServices() error {
 			commands,
 			d.config.Telegram,
 			d.subscribeRuntimeEvents,
+			d.clearRuntimeSession,
 			d.logger.GetZerolog(),
 		)); err != nil {
 			return fmt.Errorf("failed to register telegram channel: %w", err)
@@ -1029,6 +1030,16 @@ func (d *Daemon) subscribeRuntimeEvents(sessionKey string) (<-chan agent.Runtime
 		return ch, func() {}
 	}
 	return d.runtimeEvents.Subscribe(sessionKey, 128)
+}
+
+func (d *Daemon) clearRuntimeSession(sessionKey string) error {
+	if d.agentRunner != nil {
+		_ = d.agentRunner.Abort(sessionKey)
+	}
+	if d.sessionMgr == nil {
+		return nil
+	}
+	return d.sessionMgr.ClearSessionWithContext(context.Background(), sessionKey)
 }
 
 // GetSubagentCoordinator returns the subagent coordinator

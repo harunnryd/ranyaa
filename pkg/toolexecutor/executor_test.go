@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -192,6 +193,50 @@ func TestToolExecutor_Execute_Timeout(t *testing.T) {
 
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Error, "timeout")
+}
+
+func TestToolExecutor_Execute_WorkspacePathEnforcement(t *testing.T) {
+	te := New()
+	tmpDir := t.TempDir()
+
+	attempts := 0
+	def := ToolDefinition{
+		Name:        "write_file",
+		Description: "Writes to a path",
+		Parameters: []ToolParameter{
+			{
+				Name:        "path",
+				Type:        "string",
+				Description: "target path",
+				Required:    true,
+			},
+		},
+		Handler: func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			attempts++
+			return "ok", nil
+		},
+	}
+
+	err := te.RegisterTool(def)
+	require.NoError(t, err)
+
+	execCtx := &ExecutionContext{
+		WorkingDir: tmpDir,
+	}
+
+	denied := te.Execute(context.Background(), "write_file", map[string]interface{}{
+		"path": "/etc/passwd",
+	}, execCtx)
+	assert.False(t, denied.Success)
+	assert.Contains(t, denied.Error, "outside workspace")
+	assert.Equal(t, 0, attempts, "handler must not run for outside-workspace paths")
+
+	allowed := te.Execute(context.Background(), "write_file", map[string]interface{}{
+		"path": filepath.Join("docs", "note.txt"),
+	}, execCtx)
+	assert.True(t, allowed.Success)
+	assert.Equal(t, "ok", allowed.Output)
+	assert.Equal(t, 1, attempts)
 }
 
 func TestToolExecutor_ExecuteWithRetry_RetryableTransientError(t *testing.T) {

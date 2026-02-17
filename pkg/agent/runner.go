@@ -603,6 +603,15 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 		default:
 		}
 
+		r.emitRuntimeEvent(ctx, RuntimeEvent{
+			Event:  "reasoning",
+			Stream: RuntimeStreamReasoning,
+			Phase:  "start",
+			Metadata: map[string]interface{}{
+				"turn": turn + 1,
+			},
+		})
+
 		// Call LLM with retry
 		response, err := r.callLLMWithRetry(ctx, provider, currentMessages, tools, systemPrompt, params)
 		if err != nil {
@@ -611,6 +620,15 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 
 		// No tool calls - we're done
 		if len(response.ToolCalls) == 0 {
+			r.emitRuntimeEvent(ctx, RuntimeEvent{
+				Event:   "reasoning",
+				Stream:  RuntimeStreamReasoning,
+				Phase:   "output",
+				Content: "Finalizing response.",
+				Metadata: map[string]interface{}{
+					"turn": turn + 1,
+				},
+			})
 			if strings.TrimSpace(response.Content) != "" {
 				r.emitRuntimeEvent(ctx, RuntimeEvent{
 					Event:   "assistant",
@@ -619,6 +637,14 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 					Content: response.Content,
 				})
 			}
+			r.emitRuntimeEvent(ctx, RuntimeEvent{
+				Event:  "reasoning",
+				Stream: RuntimeStreamReasoning,
+				Phase:  "end",
+				Metadata: map[string]interface{}{
+					"turn": turn + 1,
+				},
+			})
 			return AgentResult{
 				Response:  response.Content,
 				ToolCalls: allToolCalls,
@@ -626,9 +652,28 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 			}, nil
 		}
 
+		r.emitRuntimeEvent(ctx, RuntimeEvent{
+			Event:   "reasoning",
+			Stream:  RuntimeStreamReasoning,
+			Phase:   "output",
+			Content: fmt.Sprintf("Planning tool execution: %s", joinToolNames(response.ToolCalls)),
+			Metadata: map[string]interface{}{
+				"turn": turn + 1,
+			},
+		})
+
 		// Execute tool calls
 		toolResults := []ToolResult{}
 		for _, toolCall := range response.ToolCalls {
+			r.emitRuntimeEvent(ctx, RuntimeEvent{
+				Event:   "reasoning",
+				Stream:  RuntimeStreamReasoning,
+				Phase:   "output",
+				Content: fmt.Sprintf("Executing tool: %s", toolCall.Name),
+				Metadata: map[string]interface{}{
+					"turn": turn + 1,
+				},
+			})
 			r.emitRuntimeEvent(ctx, RuntimeEvent{
 				Event:    "tool",
 				Stream:   RuntimeStreamTool,
@@ -673,6 +718,15 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 			})
 		}
 
+		r.emitRuntimeEvent(ctx, RuntimeEvent{
+			Event:  "reasoning",
+			Stream: RuntimeStreamReasoning,
+			Phase:  "end",
+			Metadata: map[string]interface{}{
+				"turn": turn + 1,
+			},
+		})
+
 		// Add assistant message with tool calls
 		currentMessages = append(currentMessages, AgentMessage{
 			Role:      "assistant",
@@ -697,6 +751,24 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 	}
 
 	return AgentResult{}, fmt.Errorf("maximum tool execution turns exceeded")
+}
+
+func joinToolNames(toolCalls []ToolCall) string {
+	if len(toolCalls) == 0 {
+		return ""
+	}
+
+	names := make([]string, 0, len(toolCalls))
+	for _, call := range toolCalls {
+		if strings.TrimSpace(call.Name) == "" {
+			continue
+		}
+		names = append(names, call.Name)
+	}
+	if len(names) == 0 {
+		return "unknown"
+	}
+	return strings.Join(names, ", ")
 }
 
 func (r *Runner) emitRuntimeEvent(ctx context.Context, event RuntimeEvent) {

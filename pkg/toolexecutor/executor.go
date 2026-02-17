@@ -3,6 +3,7 @@ package toolexecutor
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -454,6 +455,18 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		}
 	}
 
+	if err := validateWorkspacePaths(execCtx, params); err != nil {
+		logger.Error().Str("tool", toolName).Err(err).Msg("Workspace path validation failed")
+		duration := time.Since(startTime)
+		observability.RecordToolExecution(toolName, duration, false)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "workspace path validation failed")
+		return ToolResult{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
 	// Apply timeout
 	timeout := 30 * time.Second
 	if execCtx != nil && execCtx.Timeout > 0 {
@@ -831,6 +844,107 @@ func inferToolCategory(name string, description string) ToolCategory {
 		return CategoryRead
 	}
 	return CategoryGeneral
+}
+
+func validateWorkspacePaths(execCtx *ExecutionContext, params map[string]interface{}) error {
+	if execCtx == nil || strings.TrimSpace(execCtx.WorkingDir) == "" {
+		return nil
+	}
+
+	workspaceAbs, err := filepath.Abs(execCtx.WorkingDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+	workspaceAbs = filepath.Clean(workspaceAbs)
+
+	return validateWorkspaceValues(params, workspaceAbs)
+}
+
+func validateWorkspaceValues(value interface{}, workspaceAbs string) error {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, nested := range typed {
+			if isPathLikeParamKey(key) {
+				if err := validatePathValueWithinWorkspace(nested, workspaceAbs, key); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := validateWorkspaceValues(nested, workspaceAbs); err != nil {
+				return err
+			}
+		}
+	case []interface{}:
+		for _, nested := range typed {
+			if err := validateWorkspaceValues(nested, workspaceAbs); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func validatePathValueWithinWorkspace(value interface{}, workspaceAbs string, key string) error {
+	switch typed := value.(type) {
+	case string:
+		return validatePathWithinWorkspace(typed, workspaceAbs, key)
+	case []interface{}:
+		for _, item := range typed {
+			str, ok := item.(string)
+			if !ok {
+				continue
+			}
+			if err := validatePathWithinWorkspace(str, workspaceAbs, key); err != nil {
+				return err
+			}
+		}
+	case map[string]interface{}:
+		for nestedKey, nestedValue := range typed {
+			if err := validatePathValueWithinWorkspace(nestedValue, workspaceAbs, nestedKey); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validatePathWithinWorkspace(pathValue string, workspaceAbs string, key string) error {
+	pathValue = strings.TrimSpace(pathValue)
+	if pathValue == "" {
+		return nil
+	}
+	if strings.Contains(pathValue, "://") {
+		return nil
+	}
+
+	var candidate string
+	if filepath.IsAbs(pathValue) {
+		candidate = filepath.Clean(pathValue)
+	} else {
+		candidate = filepath.Clean(filepath.Join(workspaceAbs, pathValue))
+	}
+
+	rel, err := filepath.Rel(workspaceAbs, candidate)
+	if err != nil {
+		return fmt.Errorf("failed to validate workspace path %q: %w", pathValue, err)
+	}
+	if rel == "." {
+		return nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path %q for parameter %q is outside workspace %q", pathValue, key, workspaceAbs)
+	}
+	return nil
+}
+
+func isPathLikeParamKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "path", "paths", "file", "files", "filepath", "file_path", "target", "source", "destination", "output", "input", "cwd", "dir", "directory", "root":
+		return true
+	default:
+		return false
+	}
 }
 
 func isRetryableToolError(errText string) bool {

@@ -93,6 +93,7 @@ const (
 	RuntimeStreamLifecycle RuntimeEventStream = "lifecycle"
 	RuntimeStreamTool      RuntimeEventStream = "tool"
 	RuntimeStreamAssistant RuntimeEventStream = "assistant"
+	RuntimeStreamReasoning RuntimeEventStream = "reasoning"
 )
 
 // RuntimeEvent captures runtime updates emitted by the agent runner.

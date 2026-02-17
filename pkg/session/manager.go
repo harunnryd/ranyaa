@@ -365,9 +365,100 @@ func (sm *SessionManager) LoadSessionWithContext(ctx context.Context, sessionKey
 	return entries, nil
 }
 
+// ReplaceSession overwrites a session with the provided entries.
+func (sm *SessionManager) ReplaceSession(sessionKey string, entries []SessionEntry) error {
+	return sm.ReplaceSessionWithContext(context.Background(), sessionKey, entries)
+}
+
+// ReplaceSessionWithContext overwrites a session with tracing context.
+func (sm *SessionManager) ReplaceSessionWithContext(ctx context.Context, sessionKey string, entries []SessionEntry) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	_, span := tracing.StartSpan(
+		ctx,
+		"ranya.session",
+		"session.replace",
+		attribute.String("session_key", sessionKey),
+		attribute.Int("entries", len(entries)),
+	)
+	defer span.End()
+
+	if err := sm.validateSessionKey(sessionKey); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
+	lock := sm.getWriteLock(sessionKey)
+	lock.Lock()
+	defer lock.Unlock()
+
+	sessionPath := sm.getSessionPath(sessionKey)
+	tempPath := sessionPath + ".tmp"
+
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("failed to create temp session file: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Message.Role == "" || entry.Message.Content == "" {
+			file.Close()
+			_ = os.Remove(tempPath)
+			return fmt.Errorf("invalid session entry during replace")
+		}
+		if entry.SessionKey == "" {
+			entry.SessionKey = sessionKey
+		}
+
+		data, marshalErr := json.Marshal(entry)
+		if marshalErr != nil {
+			file.Close()
+			_ = os.Remove(tempPath)
+			return fmt.Errorf("failed to marshal session entry: %w", marshalErr)
+		}
+		if _, writeErr := file.Write(append(data, '\n')); writeErr != nil {
+			file.Close()
+			_ = os.Remove(tempPath)
+			return fmt.Errorf("failed to write session entry: %w", writeErr)
+		}
+	}
+
+	if err := file.Sync(); err != nil {
+		file.Close()
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to sync temp session file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to close temp session file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, sessionPath); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to replace session file: %w", err)
+	}
+
+	return nil
+}
+
 // DeleteSession deletes a session file
 func (sm *SessionManager) DeleteSession(sessionKey string) error {
 	return sm.DeleteSessionWithContext(context.Background(), sessionKey)
+}
+
+// ClearSession resets a session by removing its persisted history.
+func (sm *SessionManager) ClearSession(sessionKey string) error {
+	return sm.ClearSessionWithContext(context.Background(), sessionKey)
+}
+
+// ClearSessionWithContext resets a session with tracing context.
+func (sm *SessionManager) ClearSessionWithContext(ctx context.Context, sessionKey string) error {
+	return sm.DeleteSessionWithContext(ctx, sessionKey)
 }
 
 // DeleteSessionWithContext deletes a session file with tracing context.

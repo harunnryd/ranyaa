@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -171,4 +172,35 @@ func TestGetCleanupStats(t *testing.T) {
 	assert.Equal(t, 3, stats["total_sessions"])
 	assert.Equal(t, 2, stats["archived_sessions"])
 	assert.False(t, stats["running"].(bool))
+}
+
+func TestCleanupPrunesLargeSessions(t *testing.T) {
+	tempDir := t.TempDir()
+	manager, err := New(tempDir)
+	require.NoError(t, err)
+
+	cleanup := NewCleanup(manager, 7*24*time.Hour)
+	cleanup.SetMaxEntries(500)
+
+	sessionKey := "session-prune"
+	err = manager.CreateSession(sessionKey)
+	require.NoError(t, err)
+
+	for i := 0; i < 1000; i++ {
+		err = manager.AppendMessage(sessionKey, Message{
+			Role:      "user",
+			Content:   "msg-" + strconv.Itoa(i),
+			Timestamp: time.Now(),
+		})
+		require.NoError(t, err)
+	}
+
+	err = cleanup.CleanupNow()
+	require.NoError(t, err)
+
+	entries, err := manager.LoadSession(sessionKey)
+	require.NoError(t, err)
+	require.Len(t, entries, 500)
+	assert.Equal(t, "msg-500", entries[0].Message.Content)
+	assert.Equal(t, "msg-999", entries[len(entries)-1].Message.Content)
 }

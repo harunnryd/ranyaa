@@ -14,6 +14,7 @@ const (
 	StreamTypeTool      StreamType = "tool"
 	StreamTypeAssistant StreamType = "assistant"
 	StreamTypeLifecycle StreamType = "lifecycle"
+	StreamTypeReasoning StreamType = "reasoning"
 )
 
 // RPCRequest represents a JSON-RPC 2.0 request
