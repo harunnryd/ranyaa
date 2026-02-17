@@ -24,10 +24,12 @@ import (
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/browser"
+	"github.com/harun/ranya/pkg/channels"
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/cron"
 	"github.com/harun/ranya/pkg/gateway"
 	"github.com/harun/ranya/pkg/plugin"
+	"github.com/harun/ranya/pkg/routing"
 	"github.com/harun/ranya/pkg/session"
 	"github.com/harun/ranya/pkg/toolexecutor"
 	"github.com/rs/zerolog"
@@ -162,6 +164,7 @@ func createIntegrationDaemonWithLogFile(t *testing.T, provider agent.LLMProvider
 	cfg.Webhook.Enabled = false
 	cfg.Gateway.Port = reservePort(t)
 	cfg.Gateway.SharedSecret = "integration-secret"
+	cfg.Gateway.TickInterval = 200
 	cfg.AI.Profiles = []config.AIProfile{{
 		ID:       "integration-profile",
 		Provider: "anthropic",
@@ -600,6 +603,163 @@ func TestIntegrationGatewayTypedStreamingEvents(t *testing.T) {
 		assert.Greater(t, evt.Seq, prevSeq)
 		prevSeq = evt.Seq
 	}
+}
+
+func TestIntegrationGatewayLifecycleTickEvents(t *testing.T) {
+	d := createIntegrationDaemon(t, nil, false)
+
+	wsConn := connectAuthenticatedGatewaySocket(t, d)
+	defer wsConn.Close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var evt gateway.EventMessage
+		_ = wsConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		err := wsConn.ReadJSON(&evt)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			require.NoError(t, err)
+		}
+
+		if evt.Event == "tick" {
+			assert.Equal(t, "event", evt.Type)
+			assert.Equal(t, gateway.StreamTypeLifecycle, evt.Stream)
+			assert.Equal(t, "tick", evt.Phase)
+			assert.NotZero(t, evt.Seq)
+			return
+		}
+	}
+
+	t.Fatalf("timed out waiting for gateway tick event")
+}
+
+func TestIntegrationMultiChannelRoutingByChannelBinding(t *testing.T) {
+	origNewAgentRunner := newAgentRunner
+
+	var (
+		mu         sync.Mutex
+		calledWith []string
+	)
+	provider := &scriptedProvider{
+		responses: []*agent.LLMResponse{
+			{Content: "gateway-ok"},
+			{Content: "telegram-ok"},
+		},
+		onCall: func(req agent.LLMRequest) {
+			mu.Lock()
+			calledWith = append(calledWith, req.Model)
+			mu.Unlock()
+		},
+	}
+
+	newAgentRunner = func(cfg agent.Config) (*agent.Runner, error) {
+		cfg.ProviderFactory = fixedProviderFactory{provider: provider}
+		return agent.NewRunner(cfg)
+	}
+	t.Cleanup(func() {
+		newAgentRunner = origNewAgentRunner
+	})
+
+	tmpDir := t.TempDir()
+	workspacePath := filepath.Join(tmpDir, "workspace")
+	require.NoError(t, os.MkdirAll(workspacePath, 0755))
+
+	cfg := config.DefaultConfig()
+	cfg.DataDir = tmpDir
+	cfg.WorkspacePath = workspacePath
+	cfg.Channels.Telegram.Enabled = false
+	cfg.Webhook.Enabled = false
+	cfg.Gateway.Port = reservePort(t)
+	cfg.Gateway.SharedSecret = "integration-secret"
+	cfg.Gateway.TickInterval = 200
+	cfg.AI.Profiles = []config.AIProfile{{
+		ID:       "integration-profile",
+		Provider: "anthropic",
+		APIKey:   "sk-ant-integration",
+		Priority: 1,
+	}}
+
+	defaultAgent := cfg.Agents[0]
+	defaultAgent.Model = "model-gateway"
+	defaultAgent.Sandbox.Mode = "tools"
+	defaultAgent.Sandbox.Scope = "session"
+
+	telegramAgent := defaultAgent
+	telegramAgent.ID = "telegram-agent"
+	telegramAgent.Name = "Telegram Agent"
+	telegramAgent.Model = "model-telegram"
+
+	cfg.Agents = []config.AgentConfig{defaultAgent, telegramAgent}
+
+	log, err := logger.New(logger.Config{Level: "debug", Console: false})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = log.Close()
+	})
+
+	d, err := New(cfg, log)
+	require.NoError(t, err)
+	require.NoError(t, d.Start())
+	t.Cleanup(func() {
+		_ = d.Stop()
+	})
+
+	require.NoError(t, d.GetRoutingService().AddRoute(&routing.Route{
+		ID:       "route-telegram-channel",
+		Name:     "route-telegram-channel",
+		Handler:  "telegram-agent",
+		Priority: 90,
+		Enabled:  true,
+		Patterns: []routing.RoutePattern{
+			{Type: routing.PatternTypeWildcard, Value: "*"},
+		},
+		Metadata: map[string]interface{}{
+			"binding": map[string]interface{}{"channel": "telegram"},
+		},
+	}))
+
+	require.NoError(t, d.GetRoutingService().AddRoute(&routing.Route{
+		ID:       "route-gateway-channel",
+		Name:     "route-gateway-channel",
+		Handler:  "default",
+		Priority: 80,
+		Enabled:  true,
+		Patterns: []routing.RoutePattern{
+			{Type: routing.PatternTypeWildcard, Value: "*"},
+		},
+		Metadata: map[string]interface{}{
+			"binding": map[string]interface{}{"channel": "gateway"},
+		},
+	}))
+
+	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
+		"prompt":     "gateway route check",
+		"sessionKey": "gateway:channel-check",
+	})
+	require.Nil(t, rpcResp.Error)
+
+	_, err = d.GetChannelRegistry().Dispatch(context.Background(), channels.InboundMessage{
+		Channel:    "telegram",
+		SessionKey: "telegram:999",
+		Content:    "telegram route check",
+		Metadata: map[string]interface{}{
+			"peer": "999",
+		},
+	})
+	require.NoError(t, err)
+
+	waitForCondition(t, 2*time.Second, "both channel routes dispatched", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(calledWith) >= 2
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, calledWith, "model-gateway")
+	assert.Contains(t, calledWith, "model-telegram")
 }
 
 func hasTypedEvent(events []gateway.EventMessage, stream gateway.StreamType, phase string) bool {

@@ -14,6 +14,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4", cfg.Models.Default)
 	assert.True(t, cfg.Tools.ExecApprovals.Enabled)
 	assert.Equal(t, "info", cfg.Logging.Level)
+	assert.Equal(t, 30000, cfg.Gateway.TickInterval)
 	assert.Len(t, cfg.Agents, 1)
 	assert.Equal(t, "default", cfg.Agents[0].ID)
 	assert.Equal(t, []string{"*"}, cfg.Agents[0].AllowedSubAgents)
@@ -204,6 +205,24 @@ func TestConfigValidate(t *testing.T) {
 		err := cfg.Validate()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "DM policy")
+	})
+
+	t.Run("invalid gateway tick interval", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.AI.Profiles = []AIProfile{
+			{
+				ID:       "test-profile",
+				Provider: "anthropic",
+				APIKey:   "sk-ant-test123",
+				Priority: 1,
+			},
+		}
+		cfg.Channels.Telegram.Enabled = false
+		cfg.Gateway.TickInterval = 0
+
+		err := cfg.Validate()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "tick_interval_ms")
 	})
 }
 

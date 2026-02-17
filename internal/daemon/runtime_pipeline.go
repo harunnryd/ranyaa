@@ -9,6 +9,7 @@ import (
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
+	"github.com/harun/ranya/pkg/channels"
 	"github.com/harun/ranya/pkg/gateway"
 	"github.com/harun/ranya/pkg/orchestrator"
 	"github.com/harun/ranya/pkg/planner"
@@ -27,9 +28,18 @@ type RuntimeRequest struct {
 }
 
 func (d *Daemon) dispatchGatewayRequest(ctx context.Context, req gateway.AgentDispatchRequest) (agent.AgentResult, error) {
-	result, err := d.router.RouteMessageAndWait(ctx, Message{
+	if d.channelRegistry == nil {
+		return agent.AgentResult{}, fmt.Errorf("channel registry is not initialized")
+	}
+
+	channelName := strings.TrimSpace(req.Source)
+	if channelName == "" {
+		channelName = "gateway"
+	}
+
+	result, err := d.channelRegistry.Dispatch(ctx, channels.InboundMessage{
+		Channel:    channelName,
 		SessionKey: req.SessionKey,
-		Source:     req.Source,
 		Content:    req.Prompt,
 		Metadata:   req.Metadata,
 		AgentID:    req.AgentID,

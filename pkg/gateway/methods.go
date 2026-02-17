@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
@@ -37,13 +38,9 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
 	}
 
-	// Extract config (optional)
-	config := agent.AgentConfig{
-		Model:       "claude-3-5-sonnet-20241022",
-		Temperature: 0.7,
-		MaxTokens:   4096,
-		MaxRetries:  3,
-	}
+	// Extract config overrides (optional).
+	// Empty values defer to agent-level defaults resolved by runtime pipeline.
+	config := agent.AgentConfig{}
 
 	if configMap, ok := params["config"].(map[string]interface{}); ok {
 		if model, ok := configMap["model"].(string); ok {
@@ -81,6 +78,11 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		cwd = cwdParam
 	}
 
+	agentID := ""
+	if requestedAgentID, ok := params["agentId"].(string); ok {
+		agentID = strings.TrimSpace(requestedAgentID)
+	}
+
 	ctx := tracing.NewRequestContext(context.Background())
 	ctx = tracing.WithSessionKey(ctx, sessionKey)
 	ctx = tracing.WithRunID(ctx, tracing.NewRunID())
@@ -89,7 +91,7 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		Prompt:     prompt,
 		SessionKey: sessionKey,
 		Source:     "gateway",
-		AgentID:    "default",
+		AgentID:    agentID,
 		Config:     config,
 		CWD:        cwd,
 		Metadata:   params,

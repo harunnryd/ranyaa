@@ -18,6 +18,7 @@ import (
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/browser"
+	"github.com/harun/ranya/pkg/channels"
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/cron"
 	"github.com/harun/ranya/pkg/gateway"
@@ -54,11 +55,12 @@ type Daemon struct {
 	subagentCoord  *subagent.Coordinator
 
 	// Services
-	gatewayServer  *gateway.Server
-	webhookServer  *webhook.Server
-	cronService    *cron.Service
-	nodeManager    *node.NodeManager
-	routingService *routing.RoutingService
+	gatewayServer   *gateway.Server
+	webhookServer   *webhook.Server
+	cronService     *cron.Service
+	nodeManager     *node.NodeManager
+	routingService  *routing.RoutingService
+	channelRegistry *channels.Registry
 
 	// Telegram
 	telegramBot *telegram.Bot
@@ -296,6 +298,7 @@ func (d *Daemon) initializeServices() error {
 	gatewayServer, err := gateway.NewServer(gateway.Config{
 		Port:            d.config.Gateway.Port,
 		SharedSecret:    d.config.Gateway.SharedSecret,
+		TickInterval:    time.Duration(d.config.Gateway.TickInterval) * time.Millisecond,
 		CommandQueue:    d.queue,
 		AgentRunner:     d.agentRunner,
 		AgentDispatcher: d.dispatchGatewayRequest,
@@ -363,6 +366,10 @@ func (d *Daemon) initializeServices() error {
 	d.routingService = routingService
 	d.logger.Info().Msg("Routing service initialized")
 
+	if err := d.initializeChannelRegistry(); err != nil {
+		return fmt.Errorf("failed to initialize channel registry: %w", err)
+	}
+
 	if err := node.RegisterGatewayMethods(d.gatewayServer, d.nodeManager, d.queue); err != nil {
 		return fmt.Errorf("failed to register node gateway methods: %w", err)
 	}
@@ -412,9 +419,9 @@ func (d *Daemon) initializeServices() error {
 			agentCfg.UseMemory = true
 
 			logger.Info().Str("message", message).Msg("Executing cron agent job")
-			_, runErr := d.router.RouteMessageAndWait(ctx, Message{
+			_, runErr := d.channelRegistry.Dispatch(ctx, channels.InboundMessage{
+				Channel:    "cron",
 				SessionKey: sessionKey,
-				Source:     "cron",
 				Content:    message,
 				AgentID:    "default",
 				RunConfig:  agentCfg,
@@ -450,6 +457,9 @@ func (d *Daemon) initializeServices() error {
 			return fmt.Errorf("failed to create telegram bot: %w", err)
 		}
 		d.telegramBot = bot
+		if err := d.registerChannel(newTelegramIngressChannel(bot, d.logger.GetZerolog())); err != nil {
+			return fmt.Errorf("failed to register telegram channel: %w", err)
+		}
 		if err := d.configureTelegramApprovalWorkflow(); err != nil {
 			return fmt.Errorf("failed to configure telegram approvals: %w", err)
 		}
@@ -632,6 +642,13 @@ func (d *Daemon) Start() error {
 		logger.Info().Msg("Routing service started")
 	}
 
+	if d.channelRegistry != nil {
+		if err := d.channelRegistry.StartAll(d.ctx); err != nil {
+			return fmt.Errorf("failed to start ingress channels: %w", err)
+		}
+		logger.Info().Strs("channels", d.channelRegistry.Names()).Msg("Ingress channels started")
+	}
+
 	// Start Telegram bot if enabled
 	if d.telegramBot != nil {
 		if err := d.telegramBot.Start(); err != nil {
@@ -679,6 +696,12 @@ func (d *Daemon) Stop() error {
 	traceID := tracing.NewTraceID()
 	logger := d.logger.GetZerolog().With().Str("trace_id", traceID).Logger()
 	logger.Info().Msg("Stopping Ranya daemon")
+
+	if d.channelRegistry != nil {
+		if err := d.channelRegistry.StopAll(context.Background()); err != nil {
+			logger.Error().Err(err).Msg("Failed to stop ingress channels")
+		}
+	}
 
 	// Stop Telegram bot
 	if d.telegramBot != nil {
@@ -931,6 +954,11 @@ func (d *Daemon) GetNodeManager() *node.NodeManager {
 // GetRoutingService returns the routing service
 func (d *Daemon) GetRoutingService() *routing.RoutingService {
 	return d.routingService
+}
+
+// GetChannelRegistry returns the channel registry.
+func (d *Daemon) GetChannelRegistry() *channels.Registry {
+	return d.channelRegistry
 }
 
 // GetBrowserContext returns the browser context

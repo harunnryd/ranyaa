@@ -24,6 +24,7 @@ import (
 type Server struct {
 	port            int
 	sharedSecret    string
+	tickInterval    time.Duration
 	server          *http.Server
 	upgrader        websocket.Upgrader
 	clients         *ClientRegistry
@@ -39,12 +40,15 @@ type Server struct {
 	isShuttingDown  bool
 	shutdownMu      sync.RWMutex
 	inFlightReqs    sync.WaitGroup
+	tickCancel      context.CancelFunc
+	tickWG          sync.WaitGroup
 }
 
 // Config holds server configuration
 type Config struct {
 	Port            int
 	SharedSecret    string
+	TickInterval    time.Duration
 	CommandQueue    *commandqueue.CommandQueue
 	AgentRunner     *agent.Runner
 	AgentDispatcher AgentDispatcher
@@ -87,6 +91,9 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.SessionManager == nil {
 		return nil, fmt.Errorf("session manager is required")
 	}
+	if cfg.TickInterval <= 0 {
+		cfg.TickInterval = 30 * time.Second
+	}
 
 	clients := NewClientRegistry()
 	router := NewRPCRouter()
@@ -96,6 +103,7 @@ func NewServer(cfg Config) (*Server, error) {
 	s := &Server{
 		port:            cfg.Port,
 		sharedSecret:    cfg.SharedSecret,
+		tickInterval:    cfg.TickInterval,
 		clients:         clients,
 		router:          router,
 		authHandler:     authHandler,
@@ -147,6 +155,7 @@ func (s *Server) Start() error {
 
 	// Give the server a moment to start
 	time.Sleep(50 * time.Millisecond)
+	s.startTickEmitter()
 
 	return nil
 }
@@ -158,6 +167,7 @@ func (s *Server) Stop() error {
 	s.shutdownMu.Unlock()
 
 	s.logger.Info().Msg("Shutting down Gateway Server")
+	s.stopTickEmitter()
 
 	// Broadcast shutdown event
 	s.broadcaster.Broadcast("server.shutdown", map[string]interface{}{
@@ -194,6 +204,47 @@ func (s *Server) Stop() error {
 
 	s.logger.Info().Msg("Gateway Server stopped")
 	return nil
+}
+
+func (s *Server) startTickEmitter() {
+	if s.tickInterval <= 0 {
+		return
+	}
+
+	tickCtx, cancel := context.WithCancel(context.Background())
+	s.tickCancel = cancel
+	s.tickWG.Add(1)
+
+	go func() {
+		defer s.tickWG.Done()
+
+		ticker := time.NewTicker(s.tickInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-tickCtx.Done():
+				return
+			case <-ticker.C:
+				s.broadcaster.BroadcastTyped(EventMessage{
+					Event:  "tick",
+					Stream: StreamTypeLifecycle,
+					Phase:  "tick",
+					Data: map[string]interface{}{
+						"status": "alive",
+					},
+				})
+			}
+		}
+	}()
+}
+
+func (s *Server) stopTickEmitter() {
+	if s.tickCancel != nil {
+		s.tickCancel()
+		s.tickCancel = nil
+	}
+	s.tickWG.Wait()
 }
 
 // handleWebSocket handles WebSocket connections

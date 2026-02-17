@@ -123,6 +123,7 @@ type GatewayConfig struct {
 	Port         int    `json:"port" mapstructure:"port"`
 	Host         string `json:"host" mapstructure:"host"`
 	SharedSecret string `json:"shared_secret" mapstructure:"shared_secret"`
+	TickInterval int    `json:"tick_interval_ms" mapstructure:"tick_interval_ms"`
 }
 
 // WebhookConfig holds webhook server configuration
@@ -181,6 +182,7 @@ func DefaultConfig() *Config {
 			Port:         8080,
 			Host:         "0.0.0.0",
 			SharedSecret: "",
+			TickInterval: 30000,
 		},
 		Webhook: WebhookConfig{
 			Enabled: false,
@@ -291,6 +293,10 @@ func (c *Config) Validate() error {
 		if c.Telegram.DMPolicy != "" && c.Telegram.DMPolicy != "pairing" && c.Telegram.DMPolicy != "allowlist" && c.Telegram.DMPolicy != "open" && c.Telegram.DMPolicy != "disabled" {
 			return fmt.Errorf("invalid telegram DM policy: %s", c.Telegram.DMPolicy)
 		}
+	}
+
+	if c.Gateway.TickInterval <= 0 {
+		return fmt.Errorf("gateway tick_interval_ms must be greater than zero")
 	}
 
 	return nil
