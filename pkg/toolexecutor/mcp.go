@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,11 +62,11 @@ func NewMCPServerAdapter(serverID, command string, args []string) *MCPServerAdap
 // Start starts the MCP server process
 func (a *MCPServerAdapter) Start(ctx context.Context) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.process != nil {
+		a.mu.Unlock()
 		return nil
 	}
+	a.mu.Unlock()
 
 	cmd := exec.CommandContext(ctx, a.command, a.args...)
 	stdin, err := cmd.StdinPipe()
@@ -81,9 +82,11 @@ func (a *MCPServerAdapter) Start(ctx context.Context) error {
 		return err
 	}
 
+	a.mu.Lock()
 	a.process = cmd
 	a.stdin = stdin
 	a.stdout = bufio.NewScanner(stdout)
+	a.mu.Unlock()
 
 	// Listen for responses separately
 	go a.listen()
@@ -315,6 +318,9 @@ func parseMCPToolParameters(schema json.RawMessage) []ToolParameter {
 		}
 		if desc, ok := prop["description"].(string); ok {
 			param.Description = desc
+		}
+		if strings.TrimSpace(param.Description) == "" {
+			param.Description = fmt.Sprintf("MCP parameter %s", name)
 		}
 		if defVal, ok := prop["default"]; ok {
 			param.Default = defVal

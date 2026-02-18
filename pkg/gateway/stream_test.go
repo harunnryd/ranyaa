@@ -84,7 +84,10 @@ func TestHandleAgentStream_SendsSSEEvents(t *testing.T) {
 	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, testServer.URL, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("X-Ranya-Secret", "secret")
@@ -97,9 +100,8 @@ func TestHandleAgentStream_SendsSSEEvents(t *testing.T) {
 
 	scanner := bufio.NewScanner(resp.Body)
 	events := []string{}
-	deadline := time.Now().Add(2 * time.Second)
 
-	for time.Now().Before(deadline) && scanner.Scan() {
+	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "event:") {
 			eventName := strings.TrimSpace(strings.TrimPrefix(line, "event:"))

@@ -125,5 +125,7 @@ func TestValidateStepResult_UsesCriticAgent(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, valid)
 	assert.Contains(t, reason, "REJECTED")
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
 	assert.GreaterOrEqual(t, provider.calls, 1)
 }
