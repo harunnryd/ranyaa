@@ -1053,7 +1053,7 @@ func TestIntegrationModelTieringSelectsRoleSpecificModels(t *testing.T) {
 	})
 	require.Nil(t, respExecutor.Error)
 
-	waitForCondition(t, 2*time.Second, "tiered model selections captured", func() bool {
+	waitForCondition(t, 2*time.Second, "routed model selections captured", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(calledWith) >= 3

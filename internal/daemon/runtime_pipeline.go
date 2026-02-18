@@ -546,10 +546,15 @@ func (d *Daemon) validateStepResult(ctx context.Context, req RuntimeRequest, ori
 		criticSystemPrompt = fmt.Sprintf("%s\n\nRespond with APPROVED or REJECTED and a short reason.", criticSystemPrompt)
 	}
 
+	model := strings.TrimSpace(critic.Model)
+	if model == "" {
+		model = runCfg.Model
+	}
+
 	criticCfg := agent.AgentConfig{
-		Model:       critic.Model,
-		Temperature: 0.1,
-		MaxTokens:   256,
+		Model:        model,
+		Temperature:  0.1,
+		MaxTokens:    256,
 		SystemPrompt: criticSystemPrompt,
 		Tools:        nil,
 		UseMemory:    false,
@@ -580,12 +585,12 @@ func (d *Daemon) validateStepResult(ctx context.Context, req RuntimeRequest, ori
 	defer cancel()
 
 	result, err := d.agentRunner.RunWithContext(critCtx, agent.AgentRunParams{
-		Prompt:     criticPrompt,
-		SessionKey: fmt.Sprintf("%s:critic", req.SessionKey),
-		Config:     criticCfg,
-		CWD:        req.CWD,
-		AgentID:    critic.ID,
-		ToolPolicy: &toolexecutor.ToolPolicy{Deny: []string{"*"}},
+		Prompt:        criticPrompt,
+		SessionKey:    fmt.Sprintf("%s:critic", req.SessionKey),
+		Config:        criticCfg,
+		CWD:           req.CWD,
+		AgentID:       critic.ID,
+		ToolPolicy:    &toolexecutor.ToolPolicy{Deny: []string{"*"}},
 		SandboxPolicy: sandboxPolicy,
 	})
 	if err != nil {

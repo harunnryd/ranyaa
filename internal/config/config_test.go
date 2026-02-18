@@ -18,6 +18,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4", cfg.Models.Default)
 	assert.True(t, cfg.Tools.ExecApprovals.Enabled)
 	assert.True(t, cfg.Tools.Retry.Enabled)
+	assert.False(t, cfg.Tools.MCP.Enabled)
 	assert.Equal(t, 3, cfg.Tools.Retry.MaxAttempts)
 	assert.Equal(t, "info", cfg.Logging.Level)
 	assert.Equal(t, 30000, cfg.Gateway.TickInterval)

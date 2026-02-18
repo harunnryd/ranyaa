@@ -95,11 +95,11 @@ func TestValidateStepResult_UsesCriticAgent(t *testing.T) {
 	cfg.Agents = []config.AgentConfig{
 		cfg.Agents[0],
 		{
-			ID:     "critic",
-			Name:   "Critic",
-			Role:   "critic",
-			Model:  "model-critic",
-			Tools:  config.ToolPolicyConfig{Allow: []string{"*"}},
+			ID:      "critic",
+			Name:    "Critic",
+			Role:    "critic",
+			Model:   "model-critic",
+			Tools:   config.ToolPolicyConfig{Allow: []string{"*"}},
 			Sandbox: config.SandboxConfig{Mode: "tools", Scope: "session", Runtime: "host"},
 		},
 	}

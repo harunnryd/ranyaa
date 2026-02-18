@@ -37,7 +37,7 @@ func (f *ApprovalForwarder) ForwardApproval(ctx context.Context, pending toolexe
 
 	// Broadcast
 	f.server.BroadcastTyped(EventMessage{
-		Event:     "tool.approval_request",
+		Event:     "approval_required",
 		Stream:    StreamTypeTool, // Using Tool stream as it relates to tool execution
 		Phase:     "approval_required",
 		Data:      data,

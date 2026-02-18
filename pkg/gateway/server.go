@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -142,6 +143,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/rpc", s.handleRPC)
 	mux.HandleFunc("/events", s.handleSSE)
+	mux.HandleFunc("/api/agent/stream", s.handleAgentStream)
 	mux.Handle("/metrics", observability.MetricsHandler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -628,6 +630,210 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// handleAgentStream handles streaming agent responses via SSE.
+func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	accept := r.Header.Get("Accept")
+	if !strings.Contains(accept, "text/event-stream") {
+		http.Error(w, "Accept: text/event-stream is required", http.StatusNotAcceptable)
+		return
+	}
+
+	// Authenticate
+	secret := r.Header.Get("X-Ranya-Secret")
+	if secret == "" {
+		secret = r.URL.Query().Get("access_token")
+	}
+
+	if s.sharedSecret != "" && secret != s.sharedSecret {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var params map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	prompt, ok := params["prompt"].(string)
+	if !ok || strings.TrimSpace(prompt) == "" {
+		http.Error(w, "prompt is required", http.StatusBadRequest)
+		return
+	}
+
+	sessionKey, ok := params["sessionKey"].(string)
+	if !ok || strings.TrimSpace(sessionKey) == "" {
+		http.Error(w, "sessionKey is required", http.StatusBadRequest)
+		return
+	}
+
+	config := agent.AgentConfig{}
+	if configMap, ok := params["config"].(map[string]interface{}); ok {
+		if model, ok := configMap["model"].(string); ok {
+			config.Model = model
+		}
+		if temp, ok := configMap["temperature"].(float64); ok {
+			config.Temperature = temp
+		}
+		if maxTokens, ok := configMap["maxTokens"].(float64); ok {
+			config.MaxTokens = int(maxTokens)
+		}
+		if systemPrompt, ok := configMap["systemPrompt"].(string); ok {
+			config.SystemPrompt = systemPrompt
+		}
+		if tools, ok := configMap["tools"].([]interface{}); ok {
+			toolNames := make([]string, 0, len(tools))
+			for _, t := range tools {
+				if toolName, ok := t.(string); ok {
+					toolNames = append(toolNames, toolName)
+				}
+			}
+			config.Tools = toolNames
+		}
+		if useMemory, ok := configMap["useMemory"].(bool); ok {
+			config.UseMemory = useMemory
+		}
+		if streaming, ok := configMap["streaming"].(bool); ok {
+			config.Streaming = streaming
+		}
+	}
+	if !config.Streaming {
+		config.Streaming = true
+	}
+
+	cwd := ""
+	if cwdParam, ok := params["cwd"].(string); ok {
+		cwd = cwdParam
+	}
+
+	agentID := ""
+	if requestedAgentID, ok := params["agentId"].(string); ok {
+		agentID = strings.TrimSpace(requestedAgentID)
+	}
+
+	if s.runtimeEventHub == nil {
+		http.Error(w, "runtime event hub is not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := tracing.NewRequestContext(r.Context())
+	ctx = tracing.WithSessionKey(ctx, sessionKey)
+	ctx = tracing.WithRunID(ctx, tracing.NewRunID())
+
+	events, unsubscribe := s.runtimeEventHub.Subscribe(sessionKey, 64)
+	defer unsubscribe()
+
+	_, _ = fmt.Fprintf(w, "event: connected\ndata: {\"session_key\":\"%s\"}\n\n", sessionKey)
+	flusher.Flush()
+
+	resultCh := make(chan agent.AgentResult, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		result, err := s.agentDispatcher(ctx, AgentDispatchRequest{
+			Prompt:     prompt,
+			SessionKey: sessionKey,
+			Source:     "gateway",
+			AgentID:    agentID,
+			Config:     config,
+			CWD:        cwd,
+			Metadata:   params,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			eventName, payload := runtimeEventToSSE(evt)
+			if eventName == "" {
+				continue
+			}
+			writeSSEEvent(w, flusher, eventName, payload)
+		case err := <-errCh:
+			writeSSEEvent(w, flusher, "error", map[string]interface{}{"error": err.Error()})
+			return
+		case result := <-resultCh:
+			writeSSEEvent(w, flusher, "complete", result)
+			return
+		}
+	}
+}
+
+func runtimeEventToSSE(evt agent.RuntimeEvent) (string, interface{}) {
+	switch evt.Stream {
+	case agent.RuntimeStreamAssistant:
+		if evt.Phase == "output" && strings.TrimSpace(evt.Content) != "" {
+			return "token", map[string]interface{}{
+				"content": evt.Content,
+				"phase":   evt.Phase,
+			}
+		}
+	case agent.RuntimeStreamTool:
+		return "tool_call", map[string]interface{}{
+			"tool":      evt.ToolName,
+			"tool_call": evt.ToolCall,
+			"phase":     evt.Phase,
+			"metadata":  evt.Metadata,
+			"event":     evt.Event,
+		}
+	case agent.RuntimeStreamLifecycle:
+		if evt.Phase == "error" {
+			var errMsg interface{}
+			if evt.Metadata != nil {
+				errMsg = evt.Metadata["error"]
+			}
+			return "error", map[string]interface{}{
+				"error":    errMsg,
+				"metadata": evt.Metadata,
+			}
+		}
+	}
+
+	return "event", map[string]interface{}{
+		"event":    evt.Event,
+		"stream":   evt.Stream,
+		"phase":    evt.Phase,
+		"content":  evt.Content,
+		"metadata": evt.Metadata,
+	}
+}
+
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, name string, payload interface{}) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, string(data))
+	flusher.Flush()
 }
 
 // GetConnectedClients returns information about all connected clients

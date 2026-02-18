@@ -121,6 +121,7 @@ type ChannelConfig struct {
 type ToolsConfig struct {
 	ExecApprovals ExecApprovalsConfig `json:"exec_approvals" mapstructure:"exec_approvals"`
 	Retry         ToolRetryConfig     `json:"retry" mapstructure:"retry"`
+	MCP           MCPConfig           `json:"mcp" mapstructure:"mcp"`
 }
 
 // ExecApprovalsConfig holds exec approval settings
@@ -135,6 +136,19 @@ type ToolRetryConfig struct {
 	MaxAttempts      int  `json:"max_attempts" mapstructure:"max_attempts"`
 	InitialBackoffMs int  `json:"initial_backoff_ms" mapstructure:"initial_backoff_ms"`
 	MaxBackoffMs     int  `json:"max_backoff_ms" mapstructure:"max_backoff_ms"`
+}
+
+// MCPConfig holds MCP server integration settings.
+type MCPConfig struct {
+	Enabled bool              `json:"enabled" mapstructure:"enabled"`
+	Servers []MCPServerConfig `json:"servers" mapstructure:"servers"`
+}
+
+// MCPServerConfig defines a single MCP server command.
+type MCPServerConfig struct {
+	ID      string   `json:"id" mapstructure:"id"`
+	Command string   `json:"command" mapstructure:"command"`
+	Args    []string `json:"args" mapstructure:"args"`
 }
 
 // HooksConfig holds daemon hook execution settings.
@@ -225,6 +239,10 @@ func DefaultConfig() *Config {
 				MaxAttempts:      3,
 				InitialBackoffMs: 250,
 				MaxBackoffMs:     2000,
+			},
+			MCP: MCPConfig{
+				Enabled: false,
+				Servers: []MCPServerConfig{},
 			},
 		},
 		Hooks: HooksConfig{
@@ -319,6 +337,26 @@ func (c *Config) Validate() error {
 		}
 		if !valid {
 			return fmt.Errorf("AI profile %s: invalid provider %s (must be: anthropic, openai, gemini)", profile.ID, profile.Provider)
+		}
+	}
+
+	// Validate MCP servers
+	if c.Tools.MCP.Enabled {
+		if len(c.Tools.MCP.Servers) == 0 {
+			return fmt.Errorf("mcp enabled but no servers configured")
+		}
+		seen := map[string]bool{}
+		for i, server := range c.Tools.MCP.Servers {
+			if strings.TrimSpace(server.ID) == "" {
+				return fmt.Errorf("mcp server %d: id is required", i)
+			}
+			if strings.TrimSpace(server.Command) == "" {
+				return fmt.Errorf("mcp server %s: command is required", server.ID)
+			}
+			if seen[server.ID] {
+				return fmt.Errorf("mcp server id %s is duplicated", server.ID)
+			}
+			seen[server.ID] = true
 		}
 	}
 

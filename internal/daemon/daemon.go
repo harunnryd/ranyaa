@@ -58,6 +58,7 @@ type Daemon struct {
 	subagentCoord  *subagent.Coordinator
 	hookManager    *hooks.Manager
 	contentFilter  *moderation.ContentFilter
+	mcpAdapters    []*toolexecutor.MCPServerAdapter
 
 	// Services
 	gatewayServer   *gateway.Server
@@ -229,6 +230,21 @@ func (d *Daemon) initializeCoreModules() error {
 		return fmt.Errorf("failed to register memory tools: %w", err)
 	}
 	d.logger.Info().Msg("Memory tools registered")
+
+	if d.config.Tools.MCP.Enabled {
+		for _, server := range d.config.Tools.MCP.Servers {
+			adapter := toolexecutor.NewMCPServerAdapter(server.ID, server.Command, server.Args)
+			registered, err := d.toolExecutor.RegisterMCPServer(d.ctx, server.ID, adapter)
+			if err != nil {
+				return fmt.Errorf("failed to register MCP server %s: %w", server.ID, err)
+			}
+			d.mcpAdapters = append(d.mcpAdapters, adapter)
+			d.logger.Info().
+				Str("server_id", server.ID).
+				Int("tool_count", len(registered)).
+				Msg("MCP server tools registered")
+		}
+	}
 
 	if d.config.WorkspacePath != "" {
 		workspaceMgr, err := workspace.NewWorkspaceManager(workspace.WorkspaceConfig{
@@ -698,6 +714,7 @@ func (d *Daemon) Start() error {
 			logger.Warn().Err(err).Msg("Failed to initialize workspace manager")
 		} else {
 			logger.Info().Msg("Workspace manager started")
+			d.applyWorkspaceBootstrap()
 		}
 	}
 
@@ -871,6 +888,13 @@ func (d *Daemon) Stop() error {
 	if d.pluginRuntime != nil {
 		if err := d.pluginRuntime.Shutdown(); err != nil {
 			logger.Error().Err(err).Msg("Failed to shutdown plugin runtime")
+		}
+	}
+
+	// Stop MCP adapters
+	for _, adapter := range d.mcpAdapters {
+		if err := adapter.Stop(); err != nil {
+			logger.Error().Err(err).Msg("Failed to stop MCP adapter")
 		}
 	}
 
@@ -1113,6 +1137,18 @@ func (d *Daemon) handleWorkspaceReload(file *workspace.WorkspaceFile) {
 			observability.RecordConfigAudit(context.Background(), "reload:soul", "system", map[string]interface{}{
 				"path": file.Path,
 			})
+		}
+	}
+}
+
+func (d *Daemon) applyWorkspaceBootstrap() {
+	if d.workspaceMgr == nil {
+		return
+	}
+
+	for _, name := range []string{"AGENTS.md", "SOUL.md"} {
+		if file, ok := d.workspaceMgr.GetFileByName(name); ok {
+			d.handleWorkspaceReload(file)
 		}
 	}
 }
