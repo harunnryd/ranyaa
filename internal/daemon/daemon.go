@@ -69,6 +69,7 @@ type Daemon struct {
 	webhookServer   *webhook.Server
 	cronService     *cron.Service
 	nodeManager     *node.NodeManager
+	nodePairing     *pairing.Manager
 	routingService  *routing.RoutingService
 	channelRegistry *channels.Registry
 
@@ -194,6 +195,12 @@ func (d *Daemon) initializeCoreModules() error {
 	}
 	d.memoryMgr = memoryMgr
 	d.logger.Info().Msg("Memory manager initialized")
+
+	if d.config.WorkspacePath != "" {
+		if err := ensureWorkspaceMemoryLayout(d.config.WorkspacePath); err != nil {
+			d.logger.Warn().Err(err).Msg("Failed to ensure workspace memory layout")
+		}
+	}
 
 	d.toolExecutor = toolexecutor.New()
 	d.toolExecutor.SetRetryConfig(toolexecutor.RetryConfig{
@@ -378,6 +385,8 @@ func (d *Daemon) initializeServices() error {
 		Host:            d.config.Gateway.Host,
 		SharedSecret:    d.config.Gateway.SharedSecret,
 		TickInterval:    time.Duration(d.config.Gateway.TickInterval) * time.Millisecond,
+		DefaultRole:     d.config.Gateway.DefaultRole,
+		DefaultScopes:   d.config.Gateway.DefaultScopes,
 		CommandQueue:    d.queue,
 		AgentRunner:     d.agentRunner,
 		AgentDispatcher: d.dispatchGatewayRequest,
@@ -469,6 +478,34 @@ func (d *Daemon) initializeServices() error {
 	d.nodeManager = nodeManager
 	d.logger.Info().Msg("Node manager initialized")
 
+	if d.config.Nodes.Pairing.Enabled {
+		pairCfg := d.config.Nodes.Pairing
+		pendingPath := strings.TrimSpace(pairCfg.PendingPath)
+		allowlistPath := strings.TrimSpace(pairCfg.AllowlistPath)
+		if pendingPath == "" || allowlistPath == "" {
+			if strings.TrimSpace(d.config.DataDir) != "" {
+				pendingPath, allowlistPath = pairing.DefaultPaths(d.config.DataDir, "node")
+			}
+		}
+		var ttl time.Duration
+		if pairCfg.TTLMinutes > 0 {
+			ttl = time.Duration(pairCfg.TTLMinutes) * time.Minute
+		}
+		manager, err := pairing.NewManager(pairing.ManagerOptions{
+			Channel:            "node",
+			PendingPath:        pendingPath,
+			AllowlistPath:      allowlistPath,
+			MaxPending:         pairCfg.MaxPending,
+			PendingTTL:         ttl,
+			BootstrapAllowlist: append([]string{}, pairCfg.BootstrapAllowlist...),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize node pairing manager: %w", err)
+		}
+		d.nodePairing = manager
+		d.logger.Info().Msg("Node pairing enabled")
+	}
+
 	if err := node.RegisterNodeTools(d.toolExecutor, d.nodeManager); err != nil {
 		return fmt.Errorf("failed to register node tools: %w", err)
 	}
@@ -486,7 +523,7 @@ func (d *Daemon) initializeServices() error {
 		return fmt.Errorf("failed to initialize channel registry: %w", err)
 	}
 
-	if err := node.RegisterGatewayMethods(d.gatewayServer, d.nodeManager, d.queue); err != nil {
+	if err := node.RegisterGatewayMethods(d.gatewayServer, d.nodeManager, d.queue, d.nodePairing); err != nil {
 		return fmt.Errorf("failed to register node gateway methods: %w", err)
 	}
 	if err := routing.RegisterGatewayMethods(d.gatewayServer, d.routingService, d.queue); err != nil {
@@ -727,6 +764,36 @@ func extractWebhookContent(body interface{}) string {
 		}
 	}
 	return ""
+}
+
+func ensureWorkspaceMemoryLayout(workspacePath string) error {
+	if strings.TrimSpace(workspacePath) == "" {
+		return nil
+	}
+
+	memDir, err := memory.EnsureMemoryDirectory(workspacePath)
+	if err != nil {
+		return err
+	}
+
+	// Ensure MEMORY.md exists.
+	memoryFile := filepath.Join(workspacePath, "MEMORY.md")
+	if exists, err := memory.FileExists(memoryFile); err == nil && !exists {
+		if err := os.WriteFile(memoryFile, []byte("# Memory\n\n"), 0644); err != nil {
+			return err
+		}
+	}
+
+	// Ensure daily memory file exists.
+	today := time.Now().Format("2006-01-02")
+	dailyFile := filepath.Join(memDir, today+".md")
+	if exists, err := memory.FileExists(dailyFile); err == nil && !exists {
+		if err := os.WriteFile(dailyFile, []byte(fmt.Sprintf("# %s\n\n", today)), 0644); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // registerPluginTools registers all plugin tools with the tool executor

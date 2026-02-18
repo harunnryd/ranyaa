@@ -49,7 +49,7 @@ func (f *ApprovalForwarder) ForwardApproval(ctx context.Context, pending toolexe
 
 // RegisterApprovalMethods registers RPC methods for handling tool approvals.
 func (s *Server) RegisterApprovalMethods(manager *toolexecutor.ApprovalManager) {
-	_ = s.router.RegisterMethod("tools.approve", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	_ = s.RegisterMethodWithScopes("tools.approve", []string{"operator.approvals"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		id, ok := params["approval_id"].(string)
 		if !ok || id == "" {
 			return nil, &RPCError{Code: InvalidParams, Message: "approval_id is required"}

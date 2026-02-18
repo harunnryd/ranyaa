@@ -86,6 +86,20 @@ func (r *Router) processMessage(ctx context.Context, msg Message) (interface{}, 
 		logger.Warn().Err(err).Msg("Failed to apply session reset policy")
 	}
 
+	if command, remaining := extractResetCommand(msg.Content); command != "" {
+		if err := r.daemon.sessionMgr.ClearSessionWithContext(ctx, msg.SessionKey); err != nil {
+			logger.Warn().Err(err).Msg("Failed to reset session")
+		}
+		if strings.TrimSpace(remaining) == "" {
+			return agent.AgentResult{
+				Response:   "✨ New conversation started.",
+				SessionKey: msg.SessionKey,
+				Aborted:    true,
+			}, nil
+		}
+		msg.Content = remaining
+	}
+
 	// Extract or generate RequestID for idempotency
 	requestID := ""
 	if msg.Metadata != nil {
@@ -149,6 +163,26 @@ func (r *Router) resolveAgentID(ctx context.Context, msg Message) (string, error
 		Msg("Routing service resolved agent handler")
 
 	return route.Handler, nil
+}
+
+func extractResetCommand(content string) (string, string) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return "", ""
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return "", ""
+	}
+	command := strings.ToLower(strings.TrimSpace(fields[0]))
+	if command != "/new" && command != "/reset" {
+		return "", ""
+	}
+	if len(fields) == 1 {
+		return command, ""
+	}
+	remaining := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+	return command, remaining
 }
 
 func routingMetadataValue(metadata map[string]interface{}, keys ...string) string {

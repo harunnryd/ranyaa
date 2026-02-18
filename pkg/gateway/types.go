@@ -70,8 +70,10 @@ type AuthChallenge struct {
 
 // AuthResponse represents a client's authentication response
 type AuthResponse struct {
-	Method    string `json:"method"`
-	Signature string `json:"signature"`
+	Method    string   `json:"method"`
+	Signature string   `json:"signature"`
+	Role      string   `json:"role,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
 }
 
 // AuthResult represents the result of authentication
@@ -89,6 +91,8 @@ type ClientInfo struct {
 	LastActivity  time.Time `json:"lastActivity"`
 	IPAddress     string    `json:"ipAddress"`
 	Idle          bool      `json:"idle"`
+	Role          string    `json:"role,omitempty"`
+	Scopes        []string  `json:"scopes,omitempty"`
 }
 
 // ClientState represents the state of a client connection
@@ -112,6 +116,8 @@ const (
 	InvalidParams          = -32602
 	InternalError          = -32603
 	AuthenticationRequired = -32001
+	PermissionDenied       = -32002
+	PairingRequired        = -32003
 	RateLimitExceeded      = -32005
 	TooManyConcurrent      = -32006
 )
@@ -130,6 +136,8 @@ type Client struct {
 	AuthAttempts  int
 	RateLimiter   *ClientRateLimiter
 	State         ClientState
+	Role          string
+	Scopes        []string
 }
 
 // WriteJSON serializes JSON writes to the websocket connection.
@@ -151,6 +159,33 @@ func (c *Client) SetAuthenticated(authenticated bool) {
 	c.authMu.Lock()
 	c.Authenticated = authenticated
 	c.authMu.Unlock()
+}
+
+// SetAuthContext sets role and scopes for the client.
+func (c *Client) SetAuthContext(role string, scopes []string) {
+	c.authMu.Lock()
+	c.Role = role
+	c.Scopes = scopes
+	c.authMu.Unlock()
+}
+
+// GetRole returns the client role.
+func (c *Client) GetRole() string {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return c.Role
+}
+
+// GetScopes returns a copy of the client scopes.
+func (c *Client) GetScopes() []string {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	if c.Scopes == nil {
+		return nil
+	}
+	scopes := make([]string, len(c.Scopes))
+	copy(scopes, c.Scopes)
+	return scopes
 }
 
 // IsAuthenticated reads authentication state safely.

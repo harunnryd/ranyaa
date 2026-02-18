@@ -100,7 +100,7 @@ func (d *Daemon) configureTelegramApprovalWorkflow() error {
 	d.toolExecutor.SetApprovalManager(approvalManager)
 
 	if d.gatewayServer != nil {
-		if err := d.gatewayServer.RegisterMethod("approvals.resolve", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		if err := d.gatewayServer.RegisterMethodWithScopes("approvals.resolve", []string{"operator.approvals"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			id, _ := params["id"].(string)
 			if strings.TrimSpace(id) == "" {
 				return nil, fmt.Errorf("id is required")

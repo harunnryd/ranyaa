@@ -95,6 +95,8 @@ func (r *ClientRegistry) GetConnectedClients() []ClientInfo {
 			LastActivity:  client.LastActivity,
 			IPAddress:     client.IPAddress,
 			Idle:          idle,
+			Role:          client.GetRole(),
+			Scopes:        client.GetScopes(),
 		})
 	}
 

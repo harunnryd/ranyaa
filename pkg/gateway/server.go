@@ -27,12 +27,16 @@ type Server struct {
 	host            string
 	sharedSecret    string
 	tickInterval    time.Duration
+	defaultRole     string
+	defaultScopes   []string
 	server          *http.Server
 	upgrader        websocket.Upgrader
 	clients         *ClientRegistry
 	router          *RPCRouter
 	authHandler     *AuthHandler
 	broadcaster     *EventBroadcaster
+	methodScopes    map[string][]string
+	methodScopesMu  sync.RWMutex
 	commandQueue    *commandqueue.CommandQueue
 	agentRunner     *agent.Runner
 	agentDispatcher AgentDispatcher
@@ -53,6 +57,8 @@ type Config struct {
 	Host            string
 	SharedSecret    string
 	TickInterval    time.Duration
+	DefaultRole     string
+	DefaultScopes   []string
 	CommandQueue    *commandqueue.CommandQueue
 	AgentRunner     *agent.Runner
 	AgentDispatcher AgentDispatcher
@@ -108,6 +114,14 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.TickInterval <= 0 {
 		cfg.TickInterval = 30 * time.Second
 	}
+	defaultRole := strings.TrimSpace(cfg.DefaultRole)
+	if defaultRole == "" {
+		defaultRole = "operator"
+	}
+	defaultScopes := normalizeScopes(cfg.DefaultScopes)
+	if len(defaultScopes) == 0 {
+		defaultScopes = []string{"operator.read", "operator.write", "operator.approvals", "operator.admin", "operator.pairing"}
+	}
 
 	clients := NewClientRegistry()
 	router := NewRPCRouter()
@@ -119,10 +133,13 @@ func NewServer(cfg Config) (*Server, error) {
 		host:            cfg.Host,
 		sharedSecret:    cfg.SharedSecret,
 		tickInterval:    cfg.TickInterval,
+		defaultRole:     defaultRole,
+		defaultScopes:   defaultScopes,
 		clients:         clients,
 		router:          router,
 		authHandler:     authHandler,
 		broadcaster:     broadcaster,
+		methodScopes:    make(map[string][]string),
 		commandQueue:    cfg.CommandQueue,
 		agentRunner:     cfg.AgentRunner,
 		agentDispatcher: cfg.AgentDispatcher,
@@ -417,6 +434,11 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 		return
 	}
 
+	if !s.clientHasScopes(client, req.Method) {
+		s.sendError(client, req.ID, PermissionDenied, "Permission denied")
+		return
+	}
+
 	// Check rate limits
 	allowed, reason := client.RateLimiter.CheckRequestAllowed()
 	if !allowed {
@@ -527,6 +549,7 @@ func (s *Server) handleAuthMessage(client *Client, authResp AuthResponse) {
 			client.Conn.Close()
 		}
 	} else {
+		s.applyAuthContext(client, authResp)
 		s.logger.Info().Str("clientId", client.ID).Msg("Client authenticated")
 	}
 }
@@ -562,12 +585,123 @@ func (s *Server) BroadcastTyped(msg EventMessage) {
 
 // RegisterMethod registers an RPC method handler
 func (s *Server) RegisterMethod(name string, handler RequestHandler) error {
-	return s.router.RegisterMethod(name, handler)
+	return s.RegisterMethodWithScopes(name, nil, handler)
 }
 
 // UnregisterMethod unregisters an RPC method handler
 func (s *Server) UnregisterMethod(name string) {
 	s.router.UnregisterMethod(name)
+	s.methodScopesMu.Lock()
+	delete(s.methodScopes, name)
+	s.methodScopesMu.Unlock()
+}
+
+// RegisterMethodWithScopes registers an RPC method handler with required scopes.
+func (s *Server) RegisterMethodWithScopes(name string, scopes []string, handler RequestHandler) error {
+	if err := s.router.RegisterMethod(name, handler); err != nil {
+		return err
+	}
+	normalized := normalizeScopes(scopes)
+	s.methodScopesMu.Lock()
+	s.methodScopes[name] = normalized
+	s.methodScopesMu.Unlock()
+	return nil
+}
+
+func (s *Server) requiredScopes(method string) []string {
+	s.methodScopesMu.RLock()
+	defer s.methodScopesMu.RUnlock()
+	if scopes, ok := s.methodScopes[method]; ok {
+		return scopes
+	}
+	return nil
+}
+
+func (s *Server) clientHasScopes(client *Client, method string) bool {
+	required := s.requiredScopes(method)
+	if len(required) == 0 {
+		return true
+	}
+	scopes := normalizeScopes(client.GetScopes())
+	role := strings.ToLower(strings.TrimSpace(client.GetRole()))
+	if role == "node" && len(scopes) == 0 {
+		scopes = []string{"node"}
+	}
+	for _, req := range required {
+		if req == "" {
+			continue
+		}
+		if scopeSatisfied(req, scopes) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Server) applyAuthContext(client *Client, authResp AuthResponse) {
+	role := strings.TrimSpace(authResp.Role)
+	if role == "" {
+		role = s.defaultRole
+	}
+	scopes := normalizeScopes(authResp.Scopes)
+	if len(scopes) == 0 {
+		if strings.EqualFold(role, "node") {
+			scopes = []string{"node"}
+		} else {
+			scopes = s.defaultScopes
+		}
+	}
+	client.SetAuthContext(role, scopes)
+}
+
+func normalizeScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(scopes))
+	seen := make(map[string]struct{})
+	for _, scope := range scopes {
+		s := strings.ToLower(strings.TrimSpace(scope))
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func scopeSatisfied(required string, scopes []string) bool {
+	if required == "" {
+		return true
+	}
+	required = strings.ToLower(strings.TrimSpace(required))
+	if required == "" {
+		return true
+	}
+	for _, scope := range scopes {
+		if scope == "*" || scope == required {
+			return true
+		}
+		if strings.HasPrefix(required, "operator.") && scope == "operator.admin" {
+			return true
+		}
+		if strings.HasPrefix(required, "node.") && scope == "node.admin" {
+			return true
+		}
+	}
+	if required == "node" {
+		for _, scope := range scopes {
+			if scope == "node" || scope == "node.admin" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // handleSSE handles Server-Sent Events for streaming runtime events

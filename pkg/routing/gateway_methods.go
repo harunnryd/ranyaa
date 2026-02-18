@@ -12,7 +12,7 @@ import (
 // RegisterGatewayMethods registers routing RPC methods with the Gateway server
 func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *commandqueue.CommandQueue) error {
 	// route.list - List all routes
-	if err := gw.RegisterMethod("route.list", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.list", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse params
 			var enabled *bool
@@ -52,7 +52,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.add - Add a new route
-	if err := gw.RegisterMethod("route.add", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.add", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Extract route fields from params
 			route := &Route{}
@@ -118,7 +118,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.remove - Remove a route
-	if err := gw.RegisterMethod("route.remove", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.remove", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, ok := params["routeId"].(string)
 			if !ok || routeID == "" {
@@ -146,7 +146,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.enable - Enable a route
-	if err := gw.RegisterMethod("route.enable", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.enable", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, ok := params["routeId"].(string)
 			if !ok || routeID == "" {
@@ -174,7 +174,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.disable - Disable a route
-	if err := gw.RegisterMethod("route.disable", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.disable", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, ok := params["routeId"].(string)
 			if !ok || routeID == "" {
@@ -202,7 +202,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.stats - Get statistics
-	if err := gw.RegisterMethod("route.stats", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.stats", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, _ := params["routeId"].(string)
 
@@ -219,7 +219,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.stats.reset - Reset statistics
-	if err := gw.RegisterMethod("route.stats.reset", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.stats.reset", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, _ := params["routeId"].(string)
 
@@ -241,7 +241,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.get - Get a specific route
-	if err := gw.RegisterMethod("route.get", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.get", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, ok := params["routeId"].(string)
 			if !ok || routeID == "" {
@@ -263,7 +263,7 @@ func RegisterGatewayMethods(gw *gateway.Server, service *RoutingService, cq *com
 	}
 
 	// route.update.priority - Update route priority
-	if err := gw.RegisterMethod("route.update.priority", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("route.update.priority", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			routeID, ok := params["routeId"].(string)
 			if !ok || routeID == "" {

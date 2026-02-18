@@ -86,6 +86,13 @@ func applyDerivedDefaults(cfg *Config) error {
 		cfg.Tools.ExecApprovals.AllowlistPath = filepath.Join(cfg.DataDir, "exec-approvals.json")
 	}
 
+	if cfg.Nodes.Pairing.PendingPath == "" {
+		cfg.Nodes.Pairing.PendingPath = filepath.Join(cfg.DataDir, "pairing", "node-pending.json")
+	}
+	if cfg.Nodes.Pairing.AllowlistPath == "" {
+		cfg.Nodes.Pairing.AllowlistPath = filepath.Join(cfg.DataDir, "pairing", "node-allowlist.json")
+	}
+
 	return nil
 }
 
@@ -126,6 +133,7 @@ func (l *Loader) Save(cfg *Config) error {
 	v.Set("webhook", cfg.Webhook)
 	v.Set("ai", cfg.AI)
 	v.Set("session", cfg.Session)
+	v.Set("nodes", cfg.Nodes)
 
 	// Write config file
 	if err := v.WriteConfig(); err != nil {

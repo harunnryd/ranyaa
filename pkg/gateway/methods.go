@@ -14,16 +14,16 @@ import (
 
 // registerBuiltinMethods registers all built-in RPC methods
 func (s *Server) registerBuiltinMethods() {
-	_ = s.router.RegisterMethod("agent.wait", s.handleAgentWait)
-	_ = s.router.RegisterMethod("agent.abort", s.handleAgentAbort)
-	_ = s.router.RegisterMethod("chat.send", s.handleChatSend)
-	_ = s.router.RegisterMethod("sessions.send", s.handleSessionsSend)
-	_ = s.router.RegisterMethod("sessions.list", s.handleSessionsList)
-	_ = s.router.RegisterMethod("sessions.get", s.handleSessionsGet)
-	_ = s.router.RegisterMethod("sessions.delete", s.handleSessionsDelete)
+	_ = s.RegisterMethodWithScopes("agent.wait", []string{"operator.write"}, s.handleAgentWait)
+	_ = s.RegisterMethodWithScopes("agent.abort", []string{"operator.write"}, s.handleAgentAbort)
+	_ = s.RegisterMethodWithScopes("chat.send", []string{"operator.write"}, s.handleChatSend)
+	_ = s.RegisterMethodWithScopes("sessions.send", []string{"operator.write"}, s.handleSessionsSend)
+	_ = s.RegisterMethodWithScopes("sessions.list", []string{"operator.read"}, s.handleSessionsList)
+	_ = s.RegisterMethodWithScopes("sessions.get", []string{"operator.read"}, s.handleSessionsGet)
+	_ = s.RegisterMethodWithScopes("sessions.delete", []string{"operator.admin"}, s.handleSessionsDelete)
 
 	if s.memoryManager != nil {
-		_ = s.router.RegisterMethod("memory.search", s.handleMemorySearch)
+		_ = s.RegisterMethodWithScopes("memory.search", []string{"operator.read"}, s.handleMemorySearch)
 	}
 }
 

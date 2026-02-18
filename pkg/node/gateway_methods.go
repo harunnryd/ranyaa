@@ -3,16 +3,19 @@ package node
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/harun/ranya/pkg/commandqueue"
 	"github.com/harun/ranya/pkg/gateway"
+	"github.com/harun/ranya/pkg/pairing"
 	"github.com/rs/zerolog/log"
 )
 
 // RegisterGatewayMethods registers node RPC methods with the Gateway server
-func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *commandqueue.CommandQueue) error {
+func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *commandqueue.CommandQueue, pairingManager *pairing.Manager) error {
 	// node.register - Register a new node
-	if err := gw.RegisterMethod("node.register", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.register", []string{"node"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse node from params
 			node := &Node{}
@@ -41,6 +44,25 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 				node.Metadata = metaRaw
 			}
 
+			if pairingManager != nil {
+				pending, err := ensureNodePairing(gw, pairingManager, node.ID)
+				if err != nil {
+					return nil, err
+				}
+				if pending != nil {
+					return nil, &gateway.RPCError{
+						Code:    gateway.PairingRequired,
+						Message: "node pairing required",
+						Data: map[string]interface{}{
+							"node_id":      pending.PeerID,
+							"pairing_id":   pending.Code,
+							"expires_at":   pending.ExpiresAt.UnixMilli(),
+							"requested_at": pending.RequestedAt.UnixMilli(),
+						},
+					}
+				}
+			}
+
 			// Register node
 			if err := manager.RegisterNode(node); err != nil {
 				return nil, err
@@ -63,7 +85,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.unregister - Unregister a node
-	if err := gw.RegisterMethod("node.unregister", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.unregister", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -91,7 +113,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.list - List all nodes
-	if err := gw.RegisterMethod("node.list", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.list", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse filter
 			filter := &NodeFilter{}
@@ -126,7 +148,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.get - Get a specific node
-	if err := gw.RegisterMethod("node.get", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.get", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -148,7 +170,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.heartbeat - Handle heartbeat from a node
-	if err := gw.RegisterMethod("node.heartbeat", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.heartbeat", []string{"node"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -171,7 +193,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.invoke - Invoke a capability on a node
-	if err := gw.RegisterMethod("node.invoke", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.invoke", []string{"operator.write"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		// Parse invocation request
 		req := &InvocationRequest{}
 
@@ -203,7 +225,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.invoke.response - Handle invocation response from a node
-	if err := gw.RegisterMethod("node.invoke.response", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.invoke.response", []string{"node"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse invocation response
 			response := &InvocationResponse{}
@@ -247,7 +269,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.permission.grant - Grant a permission to a node
-	if err := gw.RegisterMethod("node.permission.grant", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.permission.grant", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -280,7 +302,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.permission.revoke - Revoke a permission from a node
-	if err := gw.RegisterMethod("node.permission.revoke", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.permission.revoke", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -313,7 +335,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.permission.list - List permissions for a node
-	if err := gw.RegisterMethod("node.permission.list", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.permission.list", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -337,7 +359,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.default.set - Set the default node
-	if err := gw.RegisterMethod("node.default.set", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.default.set", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok {
@@ -365,7 +387,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.default.get - Get the default node
-	if err := gw.RegisterMethod("node.default.get", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.default.get", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			defaultNode := manager.GetDefaultNode()
 
@@ -380,7 +402,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.stats - Get statistics for a node
-	if err := gw.RegisterMethod("node.stats", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.stats", []string{"operator.read"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -399,7 +421,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.stats.reset - Reset statistics for a node
-	if err := gw.RegisterMethod("node.stats.reset", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethodWithScopes("node.stats.reset", []string{"operator.admin"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -423,7 +445,207 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 		return fmt.Errorf("failed to register node.stats.reset: %w", err)
 	}
 
+	if pairingManager != nil {
+		if err := registerNodePairingMethods(gw, pairingManager); err != nil {
+			return err
+		}
+	}
+
 	log.Info().Msg("Node Gateway RPC methods registered")
 
 	return nil
+}
+
+func registerNodePairingMethods(gw *gateway.Server, pairingManager *pairing.Manager) error {
+	if gw == nil || pairingManager == nil {
+		return nil
+	}
+
+	if err := gw.RegisterMethodWithScopes("node.pair.request", []string{"node"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		nodeID, _ := params["nodeId"].(string)
+		if nodeID == "" {
+			nodeID, _ = params["node_id"].(string)
+		}
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" {
+			return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "nodeId is required"}
+		}
+
+		req, created, err := pairingManager.EnsurePending(nodeID)
+		if err != nil {
+			if err == pairing.ErrAlreadyAllowlisted {
+				return map[string]interface{}{
+					"status":  "paired",
+					"node_id": nodeID,
+				}, nil
+			}
+			if err == pairing.ErrPendingLimitReached {
+				return nil, &gateway.RPCError{Code: gateway.InternalError, Message: "pairing queue full"}
+			}
+			return nil, err
+		}
+
+		if created {
+			gw.BroadcastTyped(gateway.EventMessage{
+				Event:  "node.pair.requested",
+				Stream: gateway.StreamTypeLifecycle,
+				Phase:  "requested",
+				Data: map[string]interface{}{
+					"node_id":      req.PeerID,
+					"pairing_id":   req.Code,
+					"requested_at": req.RequestedAt.UnixMilli(),
+					"expires_at":   req.ExpiresAt.UnixMilli(),
+				},
+				Timestamp: time.Now().UnixMilli(),
+			})
+		}
+
+		return map[string]interface{}{
+			"status":       "pending",
+			"node_id":      req.PeerID,
+			"pairing_id":   req.Code,
+			"requested_at": req.RequestedAt.UnixMilli(),
+			"expires_at":   req.ExpiresAt.UnixMilli(),
+		}, nil
+	}); err != nil {
+		return fmt.Errorf("failed to register node.pair.request: %w", err)
+	}
+
+	if err := gw.RegisterMethodWithScopes("node.pair.list", []string{"operator.pairing"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		return map[string]interface{}{
+			"pending":   pairingManager.ListPending(),
+			"allowlist": pairingManager.ListAllowlist(),
+		}, nil
+	}); err != nil {
+		return fmt.Errorf("failed to register node.pair.list: %w", err)
+	}
+
+	if err := gw.RegisterMethodWithScopes("node.pair.approve", []string{"operator.pairing"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		code, _ := params["code"].(string)
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "code is required"}
+		}
+
+		req, err := pairingManager.Approve(code)
+		if err != nil {
+			if err == pairing.ErrRequestNotFound {
+				return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "pairing request not found"}
+			}
+			return nil, err
+		}
+
+		gw.BroadcastTyped(gateway.EventMessage{
+			Event:  "node.pair.resolved",
+			Stream: gateway.StreamTypeLifecycle,
+			Phase:  "approved",
+			Data: map[string]interface{}{
+				"node_id": req.PeerID,
+				"code":    req.Code,
+			},
+			Timestamp: time.Now().UnixMilli(),
+		})
+
+		return map[string]interface{}{
+			"status":  "approved",
+			"node_id": req.PeerID,
+			"code":    req.Code,
+		}, nil
+	}); err != nil {
+		return fmt.Errorf("failed to register node.pair.approve: %w", err)
+	}
+
+	if err := gw.RegisterMethodWithScopes("node.pair.reject", []string{"operator.pairing"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		code, _ := params["code"].(string)
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "code is required"}
+		}
+
+		req, err := pairingManager.Reject(code)
+		if err != nil {
+			if err == pairing.ErrRequestNotFound {
+				return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "pairing request not found"}
+			}
+			return nil, err
+		}
+
+		gw.BroadcastTyped(gateway.EventMessage{
+			Event:  "node.pair.resolved",
+			Stream: gateway.StreamTypeLifecycle,
+			Phase:  "rejected",
+			Data: map[string]interface{}{
+				"node_id": req.PeerID,
+				"code":    req.Code,
+			},
+			Timestamp: time.Now().UnixMilli(),
+		})
+
+		return map[string]interface{}{
+			"status":  "rejected",
+			"node_id": req.PeerID,
+			"code":    req.Code,
+		}, nil
+	}); err != nil {
+		return fmt.Errorf("failed to register node.pair.reject: %w", err)
+	}
+
+	if err := gw.RegisterMethodWithScopes("node.pair.verify", []string{"operator.pairing"}, func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+		nodeID, _ := params["nodeId"].(string)
+		if nodeID == "" {
+			nodeID, _ = params["node_id"].(string)
+		}
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID == "" {
+			return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "nodeId is required"}
+		}
+		return map[string]interface{}{
+			"node_id": nodeID,
+			"paired":  pairingManager.IsAllowed(nodeID),
+		}, nil
+	}); err != nil {
+		return fmt.Errorf("failed to register node.pair.verify: %w", err)
+	}
+
+	return nil
+}
+
+func ensureNodePairing(gw *gateway.Server, pairingManager *pairing.Manager, nodeID string) (*pairing.PendingRequest, error) {
+	if pairingManager == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(nodeID) == "" {
+		return nil, &gateway.RPCError{Code: gateway.InvalidParams, Message: "nodeId is required"}
+	}
+	if pairingManager.IsAllowed(nodeID) {
+		return nil, nil
+	}
+
+	req, created, err := pairingManager.EnsurePending(nodeID)
+	if err != nil {
+		if err == pairing.ErrPendingLimitReached {
+			return nil, &gateway.RPCError{Code: gateway.InternalError, Message: "pairing queue full"}
+		}
+		if err == pairing.ErrAlreadyAllowlisted {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if created && gw != nil {
+		gw.BroadcastTyped(gateway.EventMessage{
+			Event:  "node.pair.requested",
+			Stream: gateway.StreamTypeLifecycle,
+			Phase:  "requested",
+			Data: map[string]interface{}{
+				"node_id":      req.PeerID,
+				"pairing_id":   req.Code,
+				"requested_at": req.RequestedAt.UnixMilli(),
+				"expires_at":   req.ExpiresAt.UnixMilli(),
+			},
+			Timestamp: time.Now().UnixMilli(),
+		})
+	}
+
+	return &req, nil
 }

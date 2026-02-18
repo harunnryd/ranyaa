@@ -166,13 +166,21 @@ func (r *RPCRouter) RouteRequest(ctx context.Context, req *RPCRequest) *RPCRespo
 	result, err := handler(ctx, req.Params)
 	var response *RPCResponse
 	if err != nil {
-		response = &RPCResponse{
-			ID:      req.ID,
-			JSONRPC: "2.0",
-			Error: &RPCError{
-				Code:    InternalError,
-				Message: err.Error(),
-			},
+		if rpcErr, ok := err.(*RPCError); ok {
+			response = &RPCResponse{
+				ID:      req.ID,
+				JSONRPC: "2.0",
+				Error:   rpcErr,
+			}
+		} else {
+			response = &RPCResponse{
+				ID:      req.ID,
+				JSONRPC: "2.0",
+				Error: &RPCError{
+					Code:    InternalError,
+					Message: err.Error(),
+				},
+			}
 		}
 	} else {
 		response = &RPCResponse{

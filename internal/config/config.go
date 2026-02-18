@@ -49,6 +49,9 @@ type Config struct {
 
 	// Session configuration
 	Session SessionConfig `json:"session" mapstructure:"session"`
+
+	// Node configuration
+	Nodes NodesConfig `json:"nodes" mapstructure:"nodes"`
 }
 
 // SessionConfig holds session-related settings.
@@ -195,10 +198,12 @@ type LoggingConfig struct {
 
 // GatewayConfig holds gateway server configuration
 type GatewayConfig struct {
-	Port         int    `json:"port" mapstructure:"port"`
-	Host         string `json:"host" mapstructure:"host"`
-	SharedSecret string `json:"shared_secret" mapstructure:"shared_secret"`
-	TickInterval int    `json:"tick_interval_ms" mapstructure:"tick_interval_ms"`
+	Port          int      `json:"port" mapstructure:"port"`
+	Host          string   `json:"host" mapstructure:"host"`
+	SharedSecret  string   `json:"shared_secret" mapstructure:"shared_secret"`
+	TickInterval  int      `json:"tick_interval_ms" mapstructure:"tick_interval_ms"`
+	DefaultRole   string   `json:"default_role" mapstructure:"default_role"`
+	DefaultScopes []string `json:"default_scopes" mapstructure:"default_scopes"`
 }
 
 // WebhookConfig holds webhook server configuration
@@ -216,6 +221,21 @@ type WebhookConfig struct {
 // AIConfig holds AI provider configuration
 type AIConfig struct {
 	Profiles []AIProfile `json:"profiles" mapstructure:"profiles"`
+}
+
+// NodesConfig holds node pairing configuration
+type NodesConfig struct {
+	Pairing NodePairingConfig `json:"pairing" mapstructure:"pairing"`
+}
+
+// NodePairingConfig controls gateway-owned node pairing.
+type NodePairingConfig struct {
+	Enabled            bool     `json:"enabled" mapstructure:"enabled"`
+	MaxPending         int      `json:"max_pending" mapstructure:"max_pending"`
+	TTLMinutes         int      `json:"ttl_minutes" mapstructure:"ttl_minutes"`
+	PendingPath        string   `json:"pending_path,omitempty" mapstructure:"pending_path"`
+	AllowlistPath      string   `json:"allowlist_path,omitempty" mapstructure:"allowlist_path"`
+	BootstrapAllowlist []string `json:"allowlist,omitempty" mapstructure:"allowlist"`
 }
 
 // AIProfile represents an AI provider profile
@@ -278,10 +298,12 @@ func DefaultConfig() *Config {
 			Redaction: true,
 		},
 		Gateway: GatewayConfig{
-			Port:         8080,
-			Host:         "0.0.0.0",
-			SharedSecret: "",
-			TickInterval: 30000,
+			Port:          8080,
+			Host:          "0.0.0.0",
+			SharedSecret:  "",
+			TickInterval:  30000,
+			DefaultRole:   "operator",
+			DefaultScopes: []string{"operator.read", "operator.write", "operator.approvals", "operator.admin", "operator.pairing"},
 		},
 		Webhook: WebhookConfig{
 			Enabled:         false,
@@ -330,6 +352,13 @@ func DefaultConfig() *Config {
 				Mode:        "off",
 				AtHour:      4,
 				IdleMinutes: 0,
+			},
+		},
+		Nodes: NodesConfig{
+			Pairing: NodePairingConfig{
+				Enabled:    false,
+				MaxPending: 5,
+				TTLMinutes: 5,
 			},
 		},
 	}
@@ -432,6 +461,13 @@ func (c *Config) Validate() error {
 
 	if c.Gateway.TickInterval <= 0 {
 		return fmt.Errorf("gateway tick_interval_ms must be greater than zero")
+	}
+
+	if c.Nodes.Pairing.MaxPending < 0 {
+		return fmt.Errorf("nodes.pairing.max_pending must be >= 0")
+	}
+	if c.Nodes.Pairing.TTLMinutes < 0 {
+		return fmt.Errorf("nodes.pairing.ttl_minutes must be >= 0")
 	}
 
 	return nil
