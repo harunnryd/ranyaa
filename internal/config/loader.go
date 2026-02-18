@@ -35,7 +35,11 @@ func (l *Loader) Load() (*Config, error) {
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Return default config if file doesn't exist
-		return DefaultConfig(), nil
+		cfg := DefaultConfig()
+		if err := applyDerivedDefaults(cfg); err != nil {
+			return nil, err
+		}
+		return cfg, nil
 	}
 
 	// Setup viper
@@ -58,26 +62,31 @@ func (l *Loader) Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	// Set data directory if not specified
+	if err := applyDerivedDefaults(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func applyDerivedDefaults(cfg *Config) error {
 	if cfg.DataDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
+			return fmt.Errorf("failed to get home directory: %w", err)
 		}
 		cfg.DataDir = filepath.Join(home, ".ranya")
 	}
 
-	// Set logging file path if not specified
 	if cfg.Logging.File == "" {
 		cfg.Logging.File = filepath.Join(cfg.DataDir, "ranya.log")
 	}
 
-	// Set exec approvals path if not specified
 	if cfg.Tools.ExecApprovals.AllowlistPath == "" {
 		cfg.Tools.ExecApprovals.AllowlistPath = filepath.Join(cfg.DataDir, "exec-approvals.json")
 	}
 
-	return cfg, nil
+	return nil
 }
 
 // Save saves the configuration to file

@@ -53,8 +53,8 @@ type Config struct {
 
 // SessionConfig holds session-related settings.
 type SessionConfig struct {
-	MainKey string `json:"main_key" mapstructure:"main_key"`
-	DmScope string `json:"dm_scope" mapstructure:"dm_scope"` // main, per-peer, per-channel-peer
+	MainKey string             `json:"main_key" mapstructure:"main_key"`
+	DmScope string             `json:"dm_scope" mapstructure:"dm_scope"` // main, per-peer, per-channel-peer
 	Reset   SessionResetConfig `json:"reset" mapstructure:"reset"`
 }
 
@@ -203,14 +203,14 @@ type GatewayConfig struct {
 
 // WebhookConfig holds webhook server configuration
 type WebhookConfig struct {
-	Enabled             bool   `json:"enabled" mapstructure:"enabled"`
-	Port                int    `json:"port" mapstructure:"port"`
-	Host                string `json:"host" mapstructure:"host"`
-	Timeout             int    `json:"timeout" mapstructure:"timeout"` // seconds
-	DispatchEnabled     bool   `json:"dispatch_enabled" mapstructure:"dispatch_enabled"`
-	DispatchPath        string `json:"dispatch_path" mapstructure:"dispatch_path"`
-	DispatchSessionKey  string `json:"dispatch_session_key" mapstructure:"dispatch_session_key"`
-	DispatchAgentID     string `json:"dispatch_agent_id" mapstructure:"dispatch_agent_id"`
+	Enabled            bool   `json:"enabled" mapstructure:"enabled"`
+	Port               int    `json:"port" mapstructure:"port"`
+	Host               string `json:"host" mapstructure:"host"`
+	Timeout            int    `json:"timeout" mapstructure:"timeout"` // seconds
+	DispatchEnabled    bool   `json:"dispatch_enabled" mapstructure:"dispatch_enabled"`
+	DispatchPath       string `json:"dispatch_path" mapstructure:"dispatch_path"`
+	DispatchSessionKey string `json:"dispatch_session_key" mapstructure:"dispatch_session_key"`
+	DispatchAgentID    string `json:"dispatch_agent_id" mapstructure:"dispatch_agent_id"`
 }
 
 // AIConfig holds AI provider configuration
@@ -235,7 +235,7 @@ func DefaultConfig() *Config {
 			StreamMode:         "partial",
 			StreamMinInterval:  2000,
 			StreamMinChars:     200,
-			PairingPrompt:      "⚠️ Please pair this device first. Send /pair to begin.",
+			PairingPrompt:      "⚠️ Pairing required. Send /pair to get a pairing code.",
 			PairingSuccessText: "✅ Device paired. You can now send messages.",
 		},
 		Models: ModelsConfig{

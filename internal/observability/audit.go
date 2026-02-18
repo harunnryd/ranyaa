@@ -36,6 +36,9 @@ var (
 
 // GetAuditLogger returns the global audit logger instance
 func GetAuditLogger() *AuditLogger {
+	if auditInst != nil {
+		return auditInst
+	}
 	auditOnce.Do(func() {
 		// Default to stderr if not initialized
 		auditInst = &AuditLogger{
@@ -52,6 +55,9 @@ func InitAuditLogger(path string) error {
 		return err
 	}
 
+	if auditInst != nil && auditInst.file != nil {
+		_ = auditInst.file.Close()
+	}
 	auditInst = &AuditLogger{
 		logger: zerolog.New(file).With().Timestamp().Logger(),
 		file:   file,

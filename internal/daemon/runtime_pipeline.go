@@ -122,7 +122,8 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 			Deny:  append([]string{}, agentCfg.Tools.Deny...),
 		}, agentCfg.ID)
 	}
-	plan, err := d.generateRuntimePlan(req, runCfg)
+	toolsExplicit := req.RunConfig.Tools != nil
+	plan, err := d.generateRuntimePlan(req, runCfg, toolsExplicit)
 	if err != nil {
 		return agent.AgentResult{}, nil, err
 	}
@@ -412,13 +413,13 @@ func mergeRunConfig(base config.AgentConfig, override agent.AgentConfig) agent.A
 	return merged
 }
 
-func (d *Daemon) generateRuntimePlan(req RuntimeRequest, runCfg agent.AgentConfig) (*planner.Plan, error) {
+func (d *Daemon) generateRuntimePlan(req RuntimeRequest, runCfg agent.AgentConfig, toolsExplicit bool) (*planner.Plan, error) {
 	steps := []planner.Step{{
 		ID:          "step-1",
 		Description: "Execute request and gather results",
 	}}
 
-	if shouldUseMultiStepPlan(req.Prompt, runCfg.Tools) {
+	if shouldUseMultiStepPlan(req.Prompt, runCfg.Tools, toolsExplicit) {
 		steps = []planner.Step{
 			{
 				ID:          "step-1",
@@ -440,13 +441,17 @@ func (d *Daemon) generateRuntimePlan(req RuntimeRequest, runCfg agent.AgentConfi
 	return d.planner.GeneratePlan(planDescription, steps)
 }
 
-func shouldUseMultiStepPlan(prompt string, tools []string) bool {
+func shouldUseMultiStepPlan(prompt string, tools []string, toolsExplicit bool) bool {
 	normalized := strings.ToLower(prompt)
 	markers := []string{" then ", " and then ", " after that ", " finally ", "\n1.", "\n- "}
 	for _, marker := range markers {
 		if strings.Contains(normalized, marker) {
 			return true
 		}
+	}
+
+	if toolsExplicit && len(tools) > 0 {
+		return true
 	}
 
 	return false

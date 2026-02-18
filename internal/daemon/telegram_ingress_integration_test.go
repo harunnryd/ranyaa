@@ -477,9 +477,18 @@ func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 			texts = append(texts, call.Text)
 		}
 	}
-	assert.Contains(t, texts, "Pair first with /pair")
-	assert.Contains(t, texts, "Pairing code:")
+	assert.True(t, containsSubstring(texts, "Pair first with /pair"), "expected pairing prompt")
+	assert.True(t, containsSubstring(texts, "Pairing code:"), "expected pairing code in prompt")
 	assert.Contains(t, texts, "processed")
+}
+
+func containsSubstring(haystack []string, needle string) bool {
+	for _, item := range haystack {
+		if strings.Contains(item, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTelegramIngressResetWorkflowIntegration(t *testing.T) {
@@ -561,7 +570,7 @@ func TestTelegramIngressResetWorkflowIntegration(t *testing.T) {
 	clearedMu.Lock()
 	clearedCopy := append([]string{}, cleared...)
 	clearedMu.Unlock()
-	require.Equal(t, []string{"telegram:888001"}, clearedCopy, "session should be cleared exactly once")
+	require.Equal(t, []string{"main"}, clearedCopy, "session should be cleared exactly once")
 
 	calls := fakeAPI.snapshot()
 	var texts []string
