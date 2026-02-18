@@ -1,8 +1,11 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +15,7 @@ func TestRPCRouter_RegisterMethod(t *testing.T) {
 	router := NewRPCRouter()
 
 	t.Run("should register method successfully", func(t *testing.T) {
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "result", nil
 		}
 
@@ -22,10 +25,10 @@ func TestRPCRouter_RegisterMethod(t *testing.T) {
 	})
 
 	t.Run("should replace existing method", func(t *testing.T) {
-		handler1 := func(params map[string]interface{}) (interface{}, error) {
+		handler1 := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "result1", nil
 		}
-		handler2 := func(params map[string]interface{}) (interface{}, error) {
+		handler2 := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "result2", nil
 		}
 
@@ -46,7 +49,7 @@ func TestRPCRouter_UnregisterMethod(t *testing.T) {
 	router := NewRPCRouter()
 
 	t.Run("should unregister method", func(t *testing.T) {
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "result", nil
 		}
 
@@ -125,7 +128,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 	router := NewRPCRouter()
 
 	t.Run("should route to registered handler", func(t *testing.T) {
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return map[string]interface{}{
 				"echo": params["input"],
 			}, nil
@@ -141,7 +144,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			},
 		}
 
-		resp := router.RouteRequest(req)
+		resp := router.RouteRequest(context.Background(), req)
 		assert.Equal(t, "1", resp.ID)
 		assert.Nil(t, resp.Error)
 		assert.NotNil(t, resp.Result)
@@ -156,7 +159,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			Method: "unknown.method",
 		}
 
-		resp := router.RouteRequest(req)
+		resp := router.RouteRequest(context.Background(), req)
 		assert.Equal(t, "1", resp.ID)
 		assert.Nil(t, resp.Result)
 		assert.NotNil(t, resp.Error)
@@ -164,7 +167,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 	})
 
 	t.Run("should return error when handler fails", func(t *testing.T) {
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("handler error")
 		}
 
@@ -175,7 +178,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			Method: "test.error",
 		}
 
-		resp := router.RouteRequest(req)
+		resp := router.RouteRequest(context.Background(), req)
 		assert.Equal(t, "1", resp.ID)
 		assert.Nil(t, resp.Result)
 		assert.NotNil(t, resp.Error)
@@ -184,7 +187,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 	})
 
 	t.Run("should preserve request ID in response", func(t *testing.T) {
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return "ok", nil
 		}
 
@@ -195,13 +198,13 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 			Method: "test.id",
 		}
 
-		resp := router.RouteRequest(req)
+		resp := router.RouteRequest(context.Background(), req)
 		assert.Equal(t, "unique-id-123", resp.ID)
 	})
 
 	t.Run("should deduplicate handler execution by idempotency key", func(t *testing.T) {
 		callCount := 0
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			callCount++
 			return map[string]interface{}{
 				"callCount": callCount,
@@ -210,7 +213,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 
 		_ = router.RegisterMethod("test.idempotent", handler)
 
-		first := router.RouteRequest(&RPCRequest{
+		first := router.RouteRequest(context.Background(), &RPCRequest{
 			ID:             "req-1",
 			Method:         "test.idempotent",
 			IdempotencyKey: "idem-123",
@@ -218,7 +221,7 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 				"value": "first",
 			},
 		})
-		second := router.RouteRequest(&RPCRequest{
+		second := router.RouteRequest(context.Background(), &RPCRequest{
 			ID:             "req-2",
 			Method:         "test.idempotent",
 			IdempotencyKey: "idem-123",
@@ -241,18 +244,18 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 
 	t.Run("should not deduplicate requests without idempotency key", func(t *testing.T) {
 		callCount := 0
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			callCount++
 			return callCount, nil
 		}
 
 		_ = router.RegisterMethod("test.non_idempotent", handler)
 
-		first := router.RouteRequest(&RPCRequest{
+		first := router.RouteRequest(context.Background(), &RPCRequest{
 			ID:     "req-1",
 			Method: "test.non_idempotent",
 		})
-		second := router.RouteRequest(&RPCRequest{
+		second := router.RouteRequest(context.Background(), &RPCRequest{
 			ID:     "req-2",
 			Method: "test.non_idempotent",
 		})
@@ -261,13 +264,67 @@ func TestRPCRouter_RouteRequest(t *testing.T) {
 		require.Nil(t, second.Error)
 		assert.Equal(t, 2, callCount, "handler should run for each request when key is absent")
 	})
+
+	t.Run("should wait for in-flight request with same idempotency key", func(t *testing.T) {
+		callCount := 0
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+			time.Sleep(100 * time.Millisecond)
+			callCount++
+			return callCount, nil
+		}
+
+		_ = router.RegisterMethod("test.concurrent", handler)
+
+		// Start two requests concurrently
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		start := time.Now()
+		var resp1, resp2 *RPCResponse
+
+		go func() {
+			defer wg.Done()
+			resp1 = router.RouteRequest(context.Background(), &RPCRequest{
+				ID:             "req-1",
+				Method:         "test.concurrent",
+				IdempotencyKey: "idem-concurrent",
+			})
+		}()
+
+		time.Sleep(10 * time.Millisecond) // Ensure req1 starts first
+
+		go func() {
+			defer wg.Done()
+			resp2 = router.RouteRequest(context.Background(), &RPCRequest{
+				ID:             "req-2",
+				Method:         "test.concurrent",
+				IdempotencyKey: "idem-concurrent",
+			})
+		}()
+
+		wg.Wait()
+		duration := time.Since(start)
+
+		assert.GreaterOrEqual(t, duration, 100*time.Millisecond, "Requests should take at least 100ms")
+
+		require.NotNil(t, resp1)
+		require.NotNil(t, resp2)
+		assert.Equal(t, 1, callCount, "Handler should run exactly once")
+
+		// Both should succeed
+		assert.Nil(t, resp1.Error)
+		assert.Nil(t, resp2.Error)
+
+		// Both should have same result
+		assert.Equal(t, resp1.Result, resp2.Result)
+	})
 }
 
 func TestRPCRouter_GetMethods(t *testing.T) {
 	router := NewRPCRouter()
 
 	t.Run("should return all registered methods", func(t *testing.T) {
-		handler := func(params map[string]interface{}) (interface{}, error) {
+		handler := func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 			return nil, nil
 		}
 

@@ -849,12 +849,12 @@ func TestExecuteToolHandler_Validation(t *testing.T) {
 }
 
 // Security Validation Tests
-// Note: Full URL security validation is tested in security_test.go
+// NOTE: Full URL security validation is tested in security_test.go
 // These tests verify that the tool handlers properly validate parameters
 // URL security is enforced at the ProfileContext level during actual navigation
 
 // Error Handling Tests
-// Note: These tests verify parameter validation errors
+// NOTE: These tests verify parameter validation errors
 // Profile not found errors are tested separately with proper mocking
 
 func TestToolHandlers_ParameterErrors(t *testing.T) {
@@ -956,7 +956,7 @@ func TestToolHandlers_ParameterErrors(t *testing.T) {
 }
 
 // Timeout Tests
-// Note: These tests verify that timeout parameters are properly extracted and passed
+// NOTE: These tests verify that timeout parameters are properly extracted and passed
 // Actual timeout enforcement is tested in integration tests
 
 func TestToolHandlers_TimeoutParameters(t *testing.T) {
@@ -1014,7 +1014,7 @@ func TestToolHandlers_TimeoutParameters(t *testing.T) {
 }
 
 // Optional Parameter Tests
-// Note: These tests verify that optional parameters are properly defined in tool schemas
+// NOTE: These tests verify that optional parameters are properly defined in tool schemas
 
 func TestToolHandlers_OptionalParameterDefinitions(t *testing.T) {
 	t.Run("screenshot optional parameters", func(t *testing.T) {
@@ -1104,7 +1104,7 @@ func TestToolHandlers_OptionalParameterDefinitions(t *testing.T) {
 }
 
 // Context Cancellation Tests
-// Note: Context cancellation is properly tested in integration tests
+// NOTE: Context cancellation is properly tested in integration tests
 // These tests verify that handlers accept context parameters
 
 func TestToolHandlers_ContextParameter(t *testing.T) {

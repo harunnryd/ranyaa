@@ -18,6 +18,8 @@ const (
 	AgentIDKey ContextKey = "agent_id"
 	// SessionKeyKey is the context key for session key
 	SessionKeyKey ContextKey = "session_key"
+	// RequestIDKey is the context key for request ID (for idempotency)
+	RequestIDKey ContextKey = "request_id"
 )
 
 // TraceContext holds tracing information
@@ -26,6 +28,7 @@ type TraceContext struct {
 	RunID      string
 	AgentID    string
 	SessionKey string
+	RequestID  string
 }
 
 // NewTraceID generates a new trace ID
@@ -56,6 +59,11 @@ func WithAgentID(ctx context.Context, agentID string) context.Context {
 // WithSessionKey adds a session key to the context
 func WithSessionKey(ctx context.Context, sessionKey string) context.Context {
 	return context.WithValue(ctx, SessionKeyKey, sessionKey)
+}
+
+// WithRequestID adds a request ID to the context for idempotency
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, RequestIDKey, requestID)
 }
 
 // GetTraceID retrieves the trace ID from the context
@@ -90,6 +98,14 @@ func GetSessionKey(ctx context.Context) string {
 	return ""
 }
 
+// GetRequestID retrieves the request ID from the context
+func GetRequestID(ctx context.Context) string {
+	if requestID, ok := ctx.Value(RequestIDKey).(string); ok {
+		return requestID
+	}
+	return ""
+}
+
 // FromContext extracts all tracing information from the context
 func FromContext(ctx context.Context) *TraceContext {
 	return &TraceContext{
@@ -97,6 +113,7 @@ func FromContext(ctx context.Context) *TraceContext {
 		RunID:      GetRunID(ctx),
 		AgentID:    GetAgentID(ctx),
 		SessionKey: GetSessionKey(ctx),
+		RequestID:  GetRequestID(ctx),
 	}
 }
 
@@ -113,6 +130,9 @@ func NewContext(ctx context.Context, tc *TraceContext) context.Context {
 	}
 	if tc.SessionKey != "" {
 		ctx = WithSessionKey(ctx, tc.SessionKey)
+	}
+	if tc.RequestID != "" {
+		ctx = WithRequestID(ctx, tc.RequestID)
 	}
 	return ctx
 }

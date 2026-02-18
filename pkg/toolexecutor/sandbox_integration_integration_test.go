@@ -132,7 +132,7 @@ func TestSandboxIntegration_ErrorHandling(t *testing.T) {
 
 		result, err := sm.ExecuteInSandbox(ctx, "agent-1", req)
 		// Should get an error or non-zero exit code
-		// Note: Some systems may not return an error for non-existent commands
+		// NOTE: Some systems may not return an error for non-existent commands
 		// so we just verify the call completes
 		_ = result
 		_ = err

@@ -308,7 +308,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 	// Wait for processing
 	time.Sleep(100 * time.Millisecond)
 
-	// Note: errorReceived may or may not be true depending on timing
+	// NOTE: errorReceived may or may not be true depending on timing
 	// The important thing is that the system continues to work
 	_ = errorReceived.Load()
 

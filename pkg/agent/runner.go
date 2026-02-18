@@ -208,8 +208,14 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 	ctx = tracing.WithSessionKey(ctx, params.SessionKey)
 	logger := tracing.LoggerFromContext(ctx, r.logger).With().Str("session_key", params.SessionKey).Logger()
 
-	// Create cancellable context
-	execCtx, cancel := context.WithCancel(ctx)
+	// Apply execution timeout
+	executionTimeout := params.ExecutionTimeout
+	if executionTimeout <= 0 {
+		executionTimeout = 5 * time.Minute
+	}
+
+	// Create cancellable context with timeout
+	execCtx, cancel := context.WithTimeout(ctx, executionTimeout)
 	defer cancel()
 
 	// Register abort controller
@@ -226,6 +232,14 @@ func (r *Runner) executeAgent(ctx context.Context, params AgentRunParams) (Agent
 	// Check if already aborted
 	select {
 	case <-execCtx.Done():
+		if execCtx.Err() == context.DeadlineExceeded {
+			logger.Warn().Dur("timeout", executionTimeout).Msg("Agent execution timeout")
+			return AgentResult{
+				SessionKey: params.SessionKey,
+				Aborted:    true,
+				Response:   fmt.Sprintf("Execution timeout after %v", executionTimeout),
+			}, nil
+		}
 		return AgentResult{
 			SessionKey: params.SessionKey,
 			Aborted:    true,
@@ -594,11 +608,27 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 		}
 	}
 
-	// Maximum 10 turns to prevent infinite loops
-	for turn := 0; turn < 10; turn++ {
-		// Check for abort
+	// Get max iterations from config
+	maxIterations := params.Config.MaxIterations
+	if maxIterations <= 0 {
+		maxIterations = 25
+	}
+
+	logger := tracing.LoggerFromContext(ctx, r.logger)
+
+	// Tool execution loop with iteration limit
+	for turn := 0; turn < maxIterations; turn++ {
+		// Check for abort or timeout
 		select {
 		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				logger.Warn().Int("turn", turn+1).Int("max_iterations", maxIterations).Msg("Agent execution timeout")
+				return AgentResult{
+					Aborted:   true,
+					Response:  fmt.Sprintf("Execution timeout after %d iterations", turn),
+					ToolCalls: allToolCalls,
+				}, nil
+			}
 			return AgentResult{Aborted: true}, nil
 		default:
 		}
@@ -608,7 +638,8 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 			Stream: RuntimeStreamReasoning,
 			Phase:  "start",
 			Metadata: map[string]interface{}{
-				"turn": turn + 1,
+				"turn":           turn + 1,
+				"max_iterations": maxIterations,
 			},
 		})
 
@@ -750,7 +781,12 @@ func (r *Runner) executeWithTools(ctx context.Context, provider LLMProvider, mes
 		allToolCalls = append(allToolCalls, response.ToolCalls...)
 	}
 
-	return AgentResult{}, fmt.Errorf("maximum tool execution turns exceeded")
+	logger.Warn().Int("max_iterations", maxIterations).Msg("Maximum tool execution iterations exceeded")
+	return AgentResult{
+		Response:  fmt.Sprintf("Maximum iteration limit (%d) reached. Partial results available.", maxIterations),
+		ToolCalls: allToolCalls,
+		Aborted:   true,
+	}, nil
 }
 
 func joinToolNames(toolCalls []ToolCall) string {

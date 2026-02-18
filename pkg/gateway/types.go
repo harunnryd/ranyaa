@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -101,7 +102,7 @@ const (
 )
 
 // RequestHandler is a function that handles RPC requests
-type RequestHandler func(params map[string]interface{}) (interface{}, error)
+type RequestHandler func(ctx context.Context, params map[string]interface{}) (interface{}, error)
 
 // RPC error codes
 const (

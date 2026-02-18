@@ -25,6 +25,7 @@ type RuntimeRequest struct {
 	RunConfig  agent.AgentConfig
 	CWD        string
 	Metadata   map[string]interface{}
+	RequestID  string // For idempotency tracking
 }
 
 func (d *Daemon) dispatchGatewayRequest(ctx context.Context, req gateway.AgentDispatchRequest) (agent.AgentResult, error) {

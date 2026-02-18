@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
@@ -15,6 +16,7 @@ import (
 func (s *Server) registerBuiltinMethods() {
 	_ = s.router.RegisterMethod("agent.wait", s.handleAgentWait)
 	_ = s.router.RegisterMethod("agent.abort", s.handleAgentAbort)
+	_ = s.router.RegisterMethod("chat.send", s.handleChatSend)
 	_ = s.router.RegisterMethod("sessions.send", s.handleSessionsSend)
 	_ = s.router.RegisterMethod("sessions.list", s.handleSessionsList)
 	_ = s.router.RegisterMethod("sessions.get", s.handleSessionsGet)
@@ -26,7 +28,7 @@ func (s *Server) registerBuiltinMethods() {
 }
 
 // handleAgentWait handles agent.wait RPC method
-func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleAgentWait(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	// Extract parameters
 	prompt, ok := params["prompt"].(string)
 	if !ok {
@@ -83,9 +85,23 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		agentID = strings.TrimSpace(requestedAgentID)
 	}
 
-	ctx := tracing.NewRequestContext(context.Background())
+	// Setup tracing context
+	ctx = tracing.NewRequestContext(ctx)
 	ctx = tracing.WithSessionKey(ctx, sessionKey)
 	ctx = tracing.WithRunID(ctx, tracing.NewRunID())
+
+	// Generate request ID for idempotency
+	requestID := tracing.NewTraceID()
+	// ctx = tracing.WithRequestID(ctx, requestID)
+
+	// Subscribe to runtime events for streaming
+	if s.runtimeEventHub != nil {
+		events, cancel := s.runtimeEventHub.Subscribe(sessionKey, 64)
+		defer cancel()
+
+		// Start streaming goroutine
+		go s.streamRuntimeEvents(ctx, sessionKey, events)
+	}
 
 	result, err := s.agentDispatcher(ctx, AgentDispatchRequest{
 		Prompt:     prompt,
@@ -101,6 +117,21 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		return nil, fmt.Errorf("agent execution failed: %w", err)
 	}
 
+	// Send completion event
+	if s.broadcaster != nil {
+		clientID, _ := ctx.Value("clientID").(string)
+		if clientID != "" {
+			s.broadcaster.BroadcastToClient(clientID, EventMessage{
+				Event:     "chat.complete",
+				Stream:    StreamTypeLifecycle,
+				Phase:     "complete",
+				Session:   sessionKey,
+				Data:      result,
+				Timestamp: time.Now().UnixMilli(),
+			})
+		}
+	}
+
 	// Convert result to map
 	return map[string]interface{}{
 		"response":   result.Response,
@@ -108,11 +139,123 @@ func (s *Server) handleAgentWait(params map[string]interface{}) (interface{}, er
 		"usage":      result.Usage,
 		"sessionKey": result.SessionKey,
 		"aborted":    result.Aborted,
+		"requestId":  requestID,
 	}, nil
 }
 
+// handleChatSend handles chat.send RPC method (send message + run agent)
+func (s *Server) handleChatSend(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+	// 1. Send session message
+	sessionKey, ok := params["sessionKey"].(string)
+	if !ok {
+		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
+	}
+
+	messageContent, ok := params["message"].(string) // "message" as input text
+	if !ok {
+		// Fallback to "prompt" if message not set, to match agent.wait
+		if prompt, ok := params["prompt"].(string); ok {
+			messageContent = prompt
+		} else {
+			return nil, fmt.Errorf("message (or prompt) parameter is required")
+		}
+	}
+
+	// Ensure prompt param is set for agent execution
+	params["prompt"] = messageContent
+
+	// Append user message
+	reqCtx := tracing.NewRequestContext(ctx)
+	reqCtx = tracing.WithSessionKey(reqCtx, sessionKey)
+
+	if err := s.sessionManager.AppendMessageWithContext(reqCtx, sessionKey, session.Message{
+		Role:    "user",
+		Content: messageContent,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to append message: %w", err)
+	}
+
+	// Broadcast session.message event
+	if s.broadcaster != nil {
+		// This one might be broadcast to everyone observing the session?
+		// For now, let's keep it broad or restrict?
+		// Existing behavior was global broadcast for session.message.
+		// We'll stick to global for session updates if that was the intent, or maybe restrict.
+		// Given the gap is about "gateway streaming", let's leave session updates global for now
+		// (assuming multiple clients might watch a session), but ensure runtime events are private.
+		s.broadcaster.Broadcast("session.message", map[string]interface{}{
+			"sessionKey": sessionKey,
+			"message": map[string]interface{}{
+				"role":    "user",
+				"content": messageContent,
+			},
+		})
+	}
+
+	// 2. Run Agent
+	return s.handleAgentWait(ctx, params)
+}
+
+// streamRuntimeEvents streams runtime events to gateway clients
+func (s *Server) streamRuntimeEvents(ctx context.Context, sessionKey string, events <-chan agent.RuntimeEvent) {
+	clientID, _ := ctx.Value("clientID").(string)
+
+	// If no client ID (e.g. HTTP request), we do NOT stream to prevent leakage.
+	if clientID == "" {
+		return
+	}
+
+	for evt := range events {
+		if s.broadcaster == nil {
+			continue
+		}
+
+		// Map agent runtime events to gateway event messages
+		stream := StreamTypeLifecycle
+		switch evt.Stream {
+		case agent.RuntimeStreamTool:
+			stream = StreamTypeTool
+		case agent.RuntimeStreamAssistant:
+			stream = StreamTypeAssistant
+		case agent.RuntimeStreamReasoning:
+			stream = StreamTypeReasoning
+		case agent.RuntimeStreamLifecycle:
+			stream = StreamTypeLifecycle
+		}
+
+		// Construct data payload
+		data := make(map[string]interface{})
+		if evt.Content != "" {
+			data["content"] = evt.Content
+		}
+		if evt.ToolName != "" {
+			data["tool_name"] = evt.ToolName
+		}
+		if evt.ToolCall != "" {
+			data["tool_call"] = evt.ToolCall
+		}
+		if evt.Metadata != nil {
+			for k, v := range evt.Metadata {
+				data[k] = v
+			}
+		}
+
+		s.broadcaster.BroadcastToClient(clientID, EventMessage{
+			Event:     evt.Event,
+			Stream:    stream,
+			Phase:     evt.Phase,
+			Session:   sessionKey,
+			Data:      data,
+			TraceID:   tracing.GetTraceID(ctx),
+			RunID:     tracing.GetRunID(ctx),
+			AgentID:   tracing.GetAgentID(ctx),
+			Timestamp: time.Now().UnixMilli(),
+		})
+	}
+}
+
 // handleAgentAbort handles agent.abort RPC method
-func (s *Server) handleAgentAbort(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleAgentAbort(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	sessionKey, ok := params["sessionKey"].(string)
 	if !ok {
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
@@ -129,7 +272,7 @@ func (s *Server) handleAgentAbort(params map[string]interface{}) (interface{}, e
 }
 
 // handleSessionsSend handles sessions.send RPC method
-func (s *Server) handleSessionsSend(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleSessionsSend(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	targetSessionKey, ok := params["targetSessionKey"].(string)
 	if !ok {
 		return nil, fmt.Errorf("targetSessionKey parameter is required and must be a string")
@@ -147,9 +290,9 @@ func (s *Server) handleSessionsSend(params map[string]interface{}) (interface{},
 	}
 
 	// Append message to session
-	ctx := tracing.NewRequestContext(context.Background())
-	ctx = tracing.WithSessionKey(ctx, targetSessionKey)
-	if err := s.sessionManager.AppendMessageWithContext(ctx, targetSessionKey, session.Message{
+	reqCtx := tracing.NewRequestContext(ctx)
+	reqCtx = tracing.WithSessionKey(reqCtx, targetSessionKey)
+	if err := s.sessionManager.AppendMessageWithContext(reqCtx, targetSessionKey, session.Message{
 		Role:    role,
 		Content: messageContent,
 	}); err != nil {
@@ -171,7 +314,7 @@ func (s *Server) handleSessionsSend(params map[string]interface{}) (interface{},
 }
 
 // handleSessionsList handles sessions.list RPC method
-func (s *Server) handleSessionsList(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleSessionsList(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	sessions, err := s.sessionManager.ListSessions()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
@@ -183,15 +326,15 @@ func (s *Server) handleSessionsList(params map[string]interface{}) (interface{},
 }
 
 // handleSessionsGet handles sessions.get RPC method
-func (s *Server) handleSessionsGet(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleSessionsGet(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	sessionKey, ok := params["sessionKey"].(string)
 	if !ok {
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
 	}
 
-	ctx := tracing.NewRequestContext(context.Background())
-	ctx = tracing.WithSessionKey(ctx, sessionKey)
-	entries, err := s.sessionManager.LoadSessionWithContext(ctx, sessionKey)
+	reqCtx := tracing.NewRequestContext(ctx)
+	reqCtx = tracing.WithSessionKey(reqCtx, sessionKey)
+	entries, err := s.sessionManager.LoadSessionWithContext(reqCtx, sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load session: %w", err)
 	}
@@ -214,15 +357,15 @@ func (s *Server) handleSessionsGet(params map[string]interface{}) (interface{}, 
 }
 
 // handleSessionsDelete handles sessions.delete RPC method
-func (s *Server) handleSessionsDelete(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleSessionsDelete(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	sessionKey, ok := params["sessionKey"].(string)
 	if !ok {
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
 	}
 
-	ctx := tracing.NewRequestContext(context.Background())
-	ctx = tracing.WithSessionKey(ctx, sessionKey)
-	if err := s.sessionManager.DeleteSessionWithContext(ctx, sessionKey); err != nil {
+	reqCtx := tracing.NewRequestContext(ctx)
+	reqCtx = tracing.WithSessionKey(reqCtx, sessionKey)
+	if err := s.sessionManager.DeleteSessionWithContext(reqCtx, sessionKey); err != nil {
 		return nil, fmt.Errorf("failed to delete session: %w", err)
 	}
 
@@ -232,7 +375,7 @@ func (s *Server) handleSessionsDelete(params map[string]interface{}) (interface{
 }
 
 // handleMemorySearch handles memory.search RPC method
-func (s *Server) handleMemorySearch(params map[string]interface{}) (interface{}, error) {
+func (s *Server) handleMemorySearch(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 	if s.memoryManager == nil {
 		return nil, fmt.Errorf("memory manager is not available")
 	}
@@ -257,8 +400,8 @@ func (s *Server) handleMemorySearch(params map[string]interface{}) (interface{},
 	}
 
 	// Perform search
-	ctx := tracing.NewRequestContext(context.Background())
-	results, err := s.memoryManager.SearchWithContext(ctx, query, opts)
+	reqCtx := tracing.NewRequestContext(ctx)
+	results, err := s.memoryManager.SearchWithContext(reqCtx, query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("memory search failed: %w", err)
 	}

@@ -36,6 +36,7 @@ type Server struct {
 	agentDispatcher AgentDispatcher
 	sessionManager  *session.SessionManager
 	memoryManager   *memory.Manager
+	runtimeEventHub RuntimeEventHub
 	logger          zerolog.Logger
 	isShuttingDown  bool
 	shutdownMu      sync.RWMutex
@@ -54,7 +55,14 @@ type Config struct {
 	AgentDispatcher AgentDispatcher
 	SessionManager  *session.SessionManager
 	MemoryManager   *memory.Manager
+	RuntimeEventHub RuntimeEventHub
 	Logger          zerolog.Logger
+}
+
+// RuntimeEventHub provides subscription to runtime events for streaming
+type RuntimeEventHub interface {
+	Subscribe(sessionKey string, buffer int) (<-chan agent.RuntimeEvent, func())
+	Publish(sessionKey string, evt agent.RuntimeEvent)
 }
 
 // AgentDispatchRequest carries an ingress request into the canonical runtime flow.
@@ -113,6 +121,7 @@ func NewServer(cfg Config) (*Server, error) {
 		agentDispatcher: cfg.AgentDispatcher,
 		sessionManager:  cfg.SessionManager,
 		memoryManager:   cfg.MemoryManager,
+		runtimeEventHub: cfg.RuntimeEventHub,
 		logger:          cfg.Logger,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
@@ -388,7 +397,10 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 		defer client.RateLimiter.RecordRequestEnd()
 		defer s.inFlightReqs.Done()
 
-		response := s.router.RouteRequest(req)
+		// Create context with client ID
+		ctx := context.WithValue(context.Background(), "clientID", client.ID)
+
+		response := s.router.RouteRequest(ctx, req)
 		if err := client.WriteJSON(response); err != nil {
 			s.logger.Error().
 				Err(err).
@@ -446,7 +458,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 		Str("method", req.Method).
 		Msg("Gateway received HTTP RPC request")
 
-	resp := s.router.RouteRequest(req)
+	resp := s.router.RouteRequest(ctx, req)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -17,11 +17,11 @@ func NewEventLoop(d *Daemon) *EventLoop {
 	}
 }
 
-// Run runs the event loop
+// Run runs the event loop with periodic maintenance tasks
 func (e *EventLoop) Run(ctx context.Context) {
 	e.daemon.logger.Info().Msg("Event loop started")
 
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -31,21 +31,35 @@ func (e *EventLoop) Run(ctx context.Context) {
 			return
 
 		case <-ticker.C:
-			// Process any pending tasks
+			// Process periodic maintenance tasks
 			e.processTasks(ctx)
 		}
 	}
 }
 
-// processTasks processes pending tasks from the queue
+// processTasks processes periodic maintenance tasks
 func (e *EventLoop) processTasks(ctx context.Context) {
-	// Get queue stats to check for active tasks
-	stats := e.daemon.queue.GetStats()
+	// Sync memory manager (if configured)
+	if e.daemon.memoryMgr != nil {
+		if err := e.daemon.memoryMgr.Sync(); err != nil {
+			e.daemon.logger.Warn().Err(err).Msg("Memory sync failed")
+		}
+	}
 
-	// Log stats periodically (every 10 seconds)
-	// This is a placeholder for actual task processing
-	// In a real implementation, this would process messages from Telegram, Gateway, etc.
-	_ = stats
+	// Log queue stats for monitoring
+	stats := e.daemon.queue.GetStats()
+	for lane, laneStats := range stats {
+		if laneStats["queued"] > 0 || laneStats["running"] > 0 {
+			e.daemon.logger.Debug().
+				Str("lane", lane).
+				Int("queued", laneStats["queued"]).
+				Int("running", laneStats["running"]).
+				Msg("Queue stats")
+		}
+	}
+
+	// NOTE: Session archiver and cleanup run in their own goroutines
+	// via Start() methods called during daemon initialization
 }
 
 // HandleShutdown handles graceful shutdown

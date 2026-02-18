@@ -624,7 +624,7 @@ func (s *Server) loadRegistry() {
 		return
 	}
 
-	// Note: Handlers must be re-registered after loading
+	// NOTE: Handlers must be re-registered after loading
 	for _, entry := range registry.Webhooks {
 		s.logger.Info().
 			Str("path", entry.Path).

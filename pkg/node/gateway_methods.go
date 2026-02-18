@@ -12,7 +12,7 @@ import (
 // RegisterGatewayMethods registers node RPC methods with the Gateway server
 func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *commandqueue.CommandQueue) error {
 	// node.register - Register a new node
-	if err := gw.RegisterMethod("node.register", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.register", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse node from params
 			node := &Node{}
@@ -63,7 +63,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.unregister - Unregister a node
-	if err := gw.RegisterMethod("node.unregister", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.unregister", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -91,7 +91,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.list - List all nodes
-	if err := gw.RegisterMethod("node.list", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.list", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse filter
 			filter := &NodeFilter{}
@@ -126,7 +126,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.get - Get a specific node
-	if err := gw.RegisterMethod("node.get", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.get", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -148,7 +148,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.heartbeat - Handle heartbeat from a node
-	if err := gw.RegisterMethod("node.heartbeat", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.heartbeat", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -171,7 +171,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.invoke - Invoke a capability on a node
-	if err := gw.RegisterMethod("node.invoke", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.invoke", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		// Parse invocation request
 		req := &InvocationRequest{}
 
@@ -203,7 +203,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.invoke.response - Handle invocation response from a node
-	if err := gw.RegisterMethod("node.invoke.response", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.invoke.response", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			// Parse invocation response
 			response := &InvocationResponse{}
@@ -247,7 +247,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.permission.grant - Grant a permission to a node
-	if err := gw.RegisterMethod("node.permission.grant", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.permission.grant", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -280,7 +280,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.permission.revoke - Revoke a permission from a node
-	if err := gw.RegisterMethod("node.permission.revoke", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.permission.revoke", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -313,7 +313,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.permission.list - List permissions for a node
-	if err := gw.RegisterMethod("node.permission.list", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.permission.list", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -337,7 +337,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.default.set - Set the default node
-	if err := gw.RegisterMethod("node.default.set", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.default.set", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok {
@@ -365,7 +365,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.default.get - Get the default node
-	if err := gw.RegisterMethod("node.default.get", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.default.get", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			defaultNode := manager.GetDefaultNode()
 
@@ -380,7 +380,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.stats - Get statistics for a node
-	if err := gw.RegisterMethod("node.stats", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.stats", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {
@@ -399,7 +399,7 @@ func RegisterGatewayMethods(gw *gateway.Server, manager *NodeManager, cq *comman
 	}
 
 	// node.stats.reset - Reset statistics for a node
-	if err := gw.RegisterMethod("node.stats.reset", func(params map[string]interface{}) (interface{}, error) {
+	if err := gw.RegisterMethod("node.stats.reset", func(ctx context.Context, params map[string]interface{}) (interface{}, error) {
 		result, err := cq.Enqueue("main", func(ctx context.Context) (interface{}, error) {
 			nodeID, ok := params["nodeId"].(string)
 			if !ok || nodeID == "" {

@@ -9,25 +9,27 @@ import (
 
 // AgentRunParams contains input parameters for agent execution
 type AgentRunParams struct {
-	Prompt        string                   `json:"prompt"`
-	SessionKey    string                   `json:"session_key"`
-	Config        AgentConfig              `json:"config"`
-	CWD           string                   `json:"cwd,omitempty"`
-	AgentID       string                   `json:"agent_id,omitempty"`
-	ToolPolicy    *toolexecutor.ToolPolicy `json:"tool_policy,omitempty"`
-	SandboxPolicy map[string]interface{}   `json:"sandbox_policy,omitempty"`
+	Prompt           string                   `json:"prompt"`
+	SessionKey       string                   `json:"session_key"`
+	Config           AgentConfig              `json:"config"`
+	CWD              string                   `json:"cwd,omitempty"`
+	AgentID          string                   `json:"agent_id,omitempty"`
+	ToolPolicy       *toolexecutor.ToolPolicy `json:"tool_policy,omitempty"`
+	SandboxPolicy    map[string]interface{}   `json:"sandbox_policy,omitempty"`
+	ExecutionTimeout time.Duration            `json:"execution_timeout,omitempty"` // Maximum execution time (default: 5 minutes)
 }
 
 // AgentConfig configures agent behavior
 type AgentConfig struct {
-	Model        string   `json:"model"`
-	Temperature  float64  `json:"temperature,omitempty"`
-	MaxTokens    int      `json:"max_tokens,omitempty"`
-	SystemPrompt string   `json:"system_prompt,omitempty"`
-	Tools        []string `json:"tools,omitempty"`
-	UseMemory    bool     `json:"use_memory,omitempty"`
-	Streaming    bool     `json:"streaming,omitempty"`
-	MaxRetries   int      `json:"max_retries,omitempty"`
+	Model         string   `json:"model"`
+	Temperature   float64  `json:"temperature,omitempty"`
+	MaxTokens     int      `json:"max_tokens,omitempty"`
+	SystemPrompt  string   `json:"system_prompt,omitempty"`
+	Tools         []string `json:"tools,omitempty"`
+	UseMemory     bool     `json:"use_memory,omitempty"`
+	Streaming     bool     `json:"streaming,omitempty"`
+	MaxRetries    int      `json:"max_retries,omitempty"`
+	MaxIterations int      `json:"max_iterations,omitempty"` // Maximum tool execution iterations (default: 25)
 }
 
 // AgentResult contains output from agent execution
@@ -126,10 +128,11 @@ func (f EventEmitterFunc) Emit(ctx context.Context, event RuntimeEvent) {
 // DefaultConfig returns default agent configuration
 func DefaultConfig() AgentConfig {
 	return AgentConfig{
-		Model:       "claude-3-5-sonnet-20241022",
-		Temperature: 0.7,
-		MaxTokens:   4096,
-		MaxRetries:  3,
+		Model:         "claude-3-5-sonnet-20241022",
+		Temperature:   0.7,
+		MaxTokens:     4096,
+		MaxRetries:    3,
+		MaxIterations: 25,
 	}
 }
 

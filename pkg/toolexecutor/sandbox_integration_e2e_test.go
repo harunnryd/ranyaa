@@ -95,7 +95,7 @@ func TestSandboxE2E_FilesystemRestrictions(t *testing.T) {
 	})
 
 	t.Run("denied path access", func(t *testing.T) {
-		// Note: Host sandbox only checks working directory for filesystem access
+		// NOTE: Host sandbox only checks working directory for filesystem access
 		// It doesn't prevent commands from accessing arbitrary paths
 		// This test verifies that denied working directories are blocked
 		req := sandbox.ExecuteRequest{

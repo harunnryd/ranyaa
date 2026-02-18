@@ -82,6 +82,18 @@ func (r *Router) processMessage(ctx context.Context, msg Message) (interface{}, 
 		Str("agent_id", agentID).
 		Msg("Processing message")
 
+	// Extract or generate RequestID for idempotency
+	requestID := ""
+	if msg.Metadata != nil {
+		if rid, ok := msg.Metadata["request_id"].(string); ok {
+			requestID = strings.TrimSpace(rid)
+		}
+	}
+	if requestID == "" {
+		requestID = tracing.NewTraceID()
+	}
+	ctx = tracing.WithRequestID(ctx, requestID)
+
 	result, _, err := r.daemon.executeRuntimeFlow(ctx, RuntimeRequest{
 		Prompt:     msg.Content,
 		SessionKey: msg.SessionKey,
@@ -90,6 +102,7 @@ func (r *Router) processMessage(ctx context.Context, msg Message) (interface{}, 
 		RunConfig:  msg.RunConfig,
 		CWD:        msg.CWD,
 		Metadata:   msg.Metadata,
+		RequestID:  requestID,
 	})
 	if err != nil {
 		logger.Error().Err(err).Msg("Runtime flow execution failed")

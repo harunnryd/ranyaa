@@ -59,13 +59,15 @@ type ToolParameter struct {
 
 // ToolDefinition defines a tool's metadata and handler
 type ToolDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  []ToolParameter `json:"parameters"`
-	Category    ToolCategory    `json:"category,omitempty"`
-	Handler     ToolHandler     `json:"-"`
-	PluginID    string          `json:"plugin_id,omitempty"`   // Plugin ID if this is a plugin tool
-	Permissions []string        `json:"permissions,omitempty"` // Plugin permissions for approval decisions
+	Name             string          `json:"name"`
+	Description      string          `json:"description"`
+	Parameters       []ToolParameter `json:"parameters"`
+	Category         ToolCategory    `json:"category,omitempty"`
+	Handler          ToolHandler     `json:"-"`
+	PluginID         string          `json:"plugin_id,omitempty"`   // Plugin ID if this is a plugin tool
+	Permissions      []string        `json:"permissions,omitempty"` // Plugin permissions for approval decisions
+	SandboxRequired  bool            `json:"sandbox_required"`      // Whether sandbox is mandatory for this tool
+	ApprovalRequired bool            `json:"approval_required"`     // Whether approval is required for this tool
 }
 
 // ToolHandler is the function signature for tool execution
@@ -227,14 +229,18 @@ func (te *ToolExecutor) RegisterPluginTool(pluginID string, toolDef ToolDefiniti
 	if category == "" {
 		category = inferToolCategory(toolName, toolDef.Description)
 	}
+	sandboxRequired := toolDef.SandboxRequired || isRiskyCategory(category)
+	approvalRequired := toolDef.ApprovalRequired
 	wrappedDef := ToolDefinition{
-		Name:        toolName,
-		Description: fmt.Sprintf("[Plugin: %s] %s", pluginID, toolDef.Description),
-		Parameters:  toolDef.Parameters,
-		Category:    category,
-		Handler:     handler,
-		PluginID:    pluginID,
-		Permissions: pluginPermissions,
+		Name:             toolName,
+		Description:      fmt.Sprintf("[Plugin: %s] %s", pluginID, toolDef.Description),
+		Parameters:       toolDef.Parameters,
+		Category:         category,
+		Handler:          handler,
+		PluginID:         pluginID,
+		Permissions:      pluginPermissions,
+		SandboxRequired:  sandboxRequired,
+		ApprovalRequired: approvalRequired,
 	}
 
 	// Validate and register
@@ -298,6 +304,16 @@ func (te *ToolExecutor) RegisterTool(def ToolDefinition) error {
 		def.Category = inferToolCategory(def.Name, def.Description)
 	}
 
+	// Auto-set sandbox and approval requirements for risky categories
+	if isRiskyCategory(def.Category) {
+		if !def.SandboxRequired {
+			def.SandboxRequired = true
+		}
+		if !def.ApprovalRequired {
+			def.ApprovalRequired = true
+		}
+	}
+
 	// Validate tool definition
 	if err := te.validateToolDefinition(def); err != nil {
 		return fmt.Errorf("invalid tool definition: %w", err)
@@ -316,7 +332,7 @@ func (te *ToolExecutor) RegisterTool(def ToolDefinition) error {
 	te.schemas[def.Name] = schema
 	_ = te.toolRegistry.Register(def.Name, def.Description, def.Category)
 
-	log.Info().Str("tool", def.Name).Msg("Tool registered")
+	log.Info().Str("tool", def.Name).Bool("sandbox_required", def.SandboxRequired).Bool("approval_required", def.ApprovalRequired).Msg("Tool registered")
 
 	return nil
 }
@@ -473,8 +489,8 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		timeout = execCtx.Timeout
 	}
 
-	// Enforce plugin approval workflow for sensitive plugin tools.
-	if tool.PluginID != "" && te.requiresApproval(tool) {
+	// Enforce approval workflow for tools that require it (both plugin and built-in)
+	if tool.ApprovalRequired || (tool.PluginID != "" && te.requiresApproval(tool)) {
 		te.mu.RLock()
 		approvalManager := te.approvalManager
 		te.mu.RUnlock()
@@ -484,9 +500,12 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 				Command: toolName,
 				Cwd:     "",
 				Context: map[string]string{
-					"plugin": tool.PluginID,
-					"tool":   toolName,
+					"tool":     toolName,
+					"category": string(category),
 				},
+			}
+			if tool.PluginID != "" {
+				approvalReq.Context["plugin"] = tool.PluginID
 			}
 			if execCtx != nil {
 				approvalReq.Cwd = execCtx.WorkingDir
@@ -498,13 +517,14 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 				duration := time.Since(startTime)
 				observability.RecordToolExecution(toolName, duration, false)
 				span.RecordError(approvalErr)
-				span.SetStatus(codes.Error, "plugin tool approval failed")
+				span.SetStatus(codes.Error, "tool approval failed")
 				return ToolResult{
 					Success: false,
-					Error:   fmt.Sprintf("plugin tool approval failed: %v", approvalErr),
+					Error:   fmt.Sprintf("tool approval failed: %v", approvalErr),
 					Metadata: map[string]interface{}{
 						"duration":        duration.Milliseconds(),
 						"plugin":          tool.PluginID,
+						"category":        string(category),
 						"approval_failed": true,
 					},
 				}
@@ -513,13 +533,14 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			if !approved {
 				duration := time.Since(startTime)
 				observability.RecordToolExecution(toolName, duration, false)
-				span.SetStatus(codes.Error, "plugin tool execution denied by user")
+				span.SetStatus(codes.Error, "tool execution denied by user")
 				return ToolResult{
 					Success: false,
-					Error:   "plugin tool execution denied by user",
+					Error:   "tool execution denied by user",
 					Metadata: map[string]interface{}{
 						"duration":        duration.Milliseconds(),
 						"plugin":          tool.PluginID,
+						"category":        string(category),
 						"approval_denied": true,
 					},
 				}
@@ -527,24 +548,29 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		}
 	}
 
-	if isRiskyCategory(category) {
+	// Enforce sandbox requirement for tools that need it
+	if tool.SandboxRequired || isRiskyCategory(category) {
 		if sandboxManager == nil {
 			duration := time.Since(startTime)
 			observability.RecordToolExecution(toolName, duration, false)
-			err := fmt.Errorf("sandbox manager is required for risky tool category '%s'", category)
+			err := fmt.Errorf("sandbox manager is required for tool '%s' (category: %s)", toolName, category)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return ToolResult{
 				Success: false,
 				Error:   err.Error(),
 				Metadata: map[string]interface{}{
-					"category": string(category),
-					"decision": "deny",
-					"reason":   "sandbox manager not configured",
+					"category":         string(category),
+					"decision":         "deny",
+					"reason":           "sandbox manager not configured",
+					"sandbox_required": true,
 				},
 			}
 		}
 
+		// MANDATORY GATE: If the tool requires sandbox (either by definition or category),
+		// we FORCE enforcement. We do NOT allow policy to disable it.
+		// Policy can still configure scope, but cannot disable isolation for risky tools.
 		if err := te.executeSandboxGate(ctx, sandboxManager, toolName, category, execCtx, timeout); err != nil {
 			duration := time.Since(startTime)
 			observability.RecordToolExecution(toolName, duration, false)
@@ -554,9 +580,10 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 				Success: false,
 				Error:   err.Error(),
 				Metadata: map[string]interface{}{
-					"category": string(category),
-					"decision": "deny",
-					"reason":   err.Error(),
+					"category":         string(category),
+					"decision":         "deny",
+					"reason":           err.Error(),
+					"sandbox_required": true,
 				},
 			}
 		}
@@ -834,13 +861,25 @@ func inferToolCategory(name string, description string) ToolCategory {
 	normalizedName := strings.ToLower(name)
 	normalizedDescription := strings.ToLower(description)
 
+	// Shell/Exec tools - High Risk
+	if normalizedName == "exec" || normalizedName == "execution" ||
+		normalizedName == "shell" || normalizedName == "bash" ||
+		normalizedName == "cmd" || normalizedName == "sh" ||
+		normalizedName == "run_command" || normalizedName == "system" ||
+		strings.HasPrefix(normalizedName, "exec_") ||
+		strings.HasPrefix(normalizedName, "shell_") {
+		return CategoryShell
+	}
+
 	if strings.HasPrefix(normalizedName, "browser_") || strings.Contains(normalizedDescription, "browser") {
 		return CategoryWeb
 	}
-	if normalizedName == "memory_write" || normalizedName == "memory_delete" {
+	if normalizedName == "memory_write" || normalizedName == "memory_delete" ||
+		normalizedName == "write_file" || normalizedName == "save_file" {
 		return CategoryWrite
 	}
-	if normalizedName == "memory_search" || normalizedName == "memory_list" {
+	if normalizedName == "memory_search" || normalizedName == "memory_list" ||
+		normalizedName == "read_file" || normalizedName == "cat_file" {
 		return CategoryRead
 	}
 	return CategoryGeneral

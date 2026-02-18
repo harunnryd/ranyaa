@@ -550,16 +550,19 @@ func TestIntegrationGatewayTypedStreamingEvents(t *testing.T) {
 	wsConn := connectAuthenticatedGatewaySocket(t, d)
 	defer wsConn.Close()
 
-	traceID := tracing.NewTraceID()
-	rpcResp := rpcCall(t, d, traceID, "agent.wait", map[string]interface{}{
-		"prompt":     "use a tool and finish",
-		"sessionKey": "typed:streaming",
-		"config": map[string]interface{}{
-			"model": "integration-model",
-			"tools": []interface{}{"typed_stream_tool"},
+	require.NoError(t, wsConn.WriteJSON(gateway.RPCRequest{
+		ID:      "req-ws-1",
+		Method:  "agent.wait",
+		JSONRPC: "2.0",
+		Params: map[string]interface{}{
+			"prompt":     "use a tool and finish",
+			"sessionKey": "typed:streaming",
+			"config": map[string]interface{}{
+				"model": "integration-model",
+				"tools": []interface{}{"typed_stream_tool"},
+			},
 		},
-	})
-	require.Nil(t, rpcResp.Error)
+	}))
 
 	var events []gateway.EventMessage
 	deadline := time.Now().Add(4 * time.Second)
@@ -668,15 +671,19 @@ func TestIntegrationGatewayReasoningStreamEvents(t *testing.T) {
 	wsConn := connectAuthenticatedGatewaySocket(t, d)
 	defer wsConn.Close()
 
-	rpcResp := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
-		"prompt":     "reason about using a tool before responding",
-		"sessionKey": "integration:reasoning-stream",
-		"config": map[string]interface{}{
-			"model": "integration-model",
-			"tools": []interface{}{"reason_probe_tool"},
+	require.NoError(t, wsConn.WriteJSON(gateway.RPCRequest{
+		ID:      "req-ws-2",
+		Method:  "agent.wait",
+		JSONRPC: "2.0",
+		Params: map[string]interface{}{
+			"prompt":     "reason about using a tool before responding",
+			"sessionKey": "integration:reasoning-stream",
+			"config": map[string]interface{}{
+				"model": "integration-model",
+				"tools": []interface{}{"reason_probe_tool"},
+			},
 		},
-	})
-	require.Nil(t, rpcResp.Error)
+	}))
 
 	var events []gateway.EventMessage
 	deadline := time.Now().Add(4 * time.Second)

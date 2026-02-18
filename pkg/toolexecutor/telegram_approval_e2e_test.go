@@ -11,7 +11,7 @@ import (
 )
 
 // TestTelegramApprovalHandler_E2E_CompleteWorkflow tests the complete approval workflow
-// Note: This test uses a mock bot API since we can't test with a real Telegram bot in CI
+// NOTE: This test uses a mock bot API since we can't test with a real Telegram bot in CI
 func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 	// Scenario 1: Complete approval workflow with approve
 	t.Run("complete workflow - approve", func(t *testing.T) {

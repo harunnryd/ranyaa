@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -13,6 +14,7 @@ type RPCRouter struct {
 	methods          map[string]RequestHandler
 	idempotencyTTL   time.Duration
 	idempotencyCache map[string]cachedRPCResponse
+	inFlight         map[string]chan struct{}
 }
 
 type cachedRPCResponse struct {
@@ -26,6 +28,7 @@ func NewRPCRouter() *RPCRouter {
 		methods:          make(map[string]RequestHandler),
 		idempotencyTTL:   5 * time.Minute,
 		idempotencyCache: make(map[string]cachedRPCResponse),
+		inFlight:         make(map[string]chan struct{}),
 	}
 }
 
@@ -85,7 +88,7 @@ func (r *RPCRouter) ParseRequest(data []byte) (*RPCRequest, error) {
 }
 
 // RouteRequest routes a request to the appropriate handler
-func (r *RPCRouter) RouteRequest(req *RPCRequest) *RPCResponse {
+func (r *RPCRouter) RouteRequest(ctx context.Context, req *RPCRequest) *RPCResponse {
 	if req == nil {
 		return &RPCResponse{
 			ID:      "",
@@ -98,10 +101,51 @@ func (r *RPCRouter) RouteRequest(req *RPCRequest) *RPCResponse {
 	}
 
 	cacheKey := idempotencyCacheKey(req.Method, req.IdempotencyKey)
+
+	// Idempotency Loop
 	if cacheKey != "" {
-		if cached, ok := r.getCachedResponse(cacheKey); ok {
-			cached.ID = req.ID
-			return &cached
+		for {
+			// 1. Check Cache
+			if cached, ok := r.getCachedResponse(cacheKey); ok {
+				cached.ID = req.ID // Return cached response with current ID
+				return &cached
+			}
+
+			// 2. Check/Set In-Flight
+			r.mu.Lock()
+			if ch, ok := r.inFlight[cacheKey]; ok {
+				// Another request is processing this key
+				r.mu.Unlock()
+				select {
+				case <-ch:
+					// Processing finished, loop to check cache
+					continue
+				case <-ctx.Done():
+					return &RPCResponse{
+						ID:      req.ID,
+						JSONRPC: "2.0",
+						Error: &RPCError{
+							Code:    InternalError,
+							Message: "Request cancelled while waiting for idempotent execution",
+						},
+					}
+				}
+			}
+
+			// Not in flight, mark it
+			ch := make(chan struct{})
+			r.inFlight[cacheKey] = ch
+			r.mu.Unlock()
+
+			// Break loop to execute
+			defer func() {
+				r.mu.Lock()
+				delete(r.inFlight, cacheKey)
+				close(ch) // Broadcast completion
+				r.mu.Unlock()
+			}()
+
+			break
 		}
 	}
 
@@ -121,7 +165,7 @@ func (r *RPCRouter) RouteRequest(req *RPCRequest) *RPCResponse {
 	}
 
 	// Execute handler
-	result, err := handler(req.Params)
+	result, err := handler(ctx, req.Params)
 	var response *RPCResponse
 	if err != nil {
 		response = &RPCResponse{

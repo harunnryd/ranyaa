@@ -323,6 +323,7 @@ func (d *Daemon) initializeServices() error {
 		AgentDispatcher: d.dispatchGatewayRequest,
 		SessionManager:  d.sessionMgr,
 		MemoryManager:   d.memoryMgr,
+		RuntimeEventHub: d.runtimeEvents,
 		Logger:          d.logger.GetZerolog(),
 	})
 	if err != nil {

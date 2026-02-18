@@ -47,6 +47,41 @@ func (b *EventBroadcaster) BroadcastTyped(msg EventMessage) {
 	b.broadcastMessage(msg)
 }
 
+// BroadcastToClient sends a typed stream event to a specific client
+func (b *EventBroadcaster) BroadcastToClient(clientID string, msg EventMessage) {
+	msg.Type = "event"
+	if msg.Seq == 0 {
+		msg.Seq = b.nextSeq()
+	}
+	if msg.Timestamp == 0 {
+		msg.Timestamp = time.Now().UnixMilli()
+	}
+
+	client, exists := b.clients.Get(clientID)
+	if !exists {
+		// Client might have disconnected, just ignore
+		return
+	}
+
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		b.logger.Error().
+			Err(err).
+			Str("clientId", clientID).
+			Str("event", msg.Event).
+			Msg("Failed to marshal event for client")
+		return
+	}
+
+	if err := client.WriteMessage(1, jsonData); err != nil {
+		b.logger.Warn().
+			Err(err).
+			Str("clientId", clientID).
+			Str("event", msg.Event).
+			Msg("Failed to send event to client")
+	}
+}
+
 func (b *EventBroadcaster) broadcastMessage(msg EventMessage) {
 	jsonData, err := json.Marshal(msg)
 	if err != nil {

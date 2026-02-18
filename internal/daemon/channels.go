@@ -193,6 +193,9 @@ func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.Disp
 		sessionKey := fmt.Sprintf("telegram:%d", msgCtx.ChatID)
 		stream := c.startStream(msgCtx.ChatID, sessionKey)
 
+		// Generate request ID for idempotency
+		requestID := fmt.Sprintf("telegram:%d:%d:%d", msgCtx.ChatID, msgCtx.MessageID, time.Now().Unix())
+
 		result, err := dispatch(context.Background(), channels.InboundMessage{
 			Channel:    "telegram",
 			SessionKey: sessionKey,
@@ -206,6 +209,7 @@ func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.Disp
 				"username":   msgCtx.Username,
 				"is_group":   msgCtx.IsGroup,
 				"is_mention": msgCtx.IsMention,
+				"request_id": requestID,
 			},
 		})
 		if err != nil {

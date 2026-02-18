@@ -248,7 +248,7 @@ func TestParallelExecutor_E2E_CompleteWorkflow(t *testing.T) {
 	orchestrator.Cleanup()
 
 	// Verify orchestrator state after cleanup
-	// Note: There might be some instances still in transition, so we just verify cleanup works
+	// NOTE: There might be some instances still in transition, so we just verify cleanup works
 	activeInstances := orchestrator.GetActiveInstances()
 	assert.GreaterOrEqual(t, 10, activeInstances, "should have reasonable number of instances")
 

@@ -71,6 +71,8 @@ type CommandQueue struct {
 	// Event handling
 	eventHandlers map[string][]EventHandler
 	eventMu       sync.RWMutex
+	// Idempotency
+	dedupCache *dedupCache
 }
 
 // New creates a new CommandQueue with default lanes
@@ -84,6 +86,7 @@ func New() *CommandQueue {
 		ctx:           ctx,
 		cancel:        cancel,
 		eventHandlers: make(map[string][]EventHandler),
+		dedupCache:    newDedupCache(5 * time.Minute),
 	}
 
 	// Initialize default lanes
@@ -140,6 +143,22 @@ func (cq *CommandQueue) EnqueueWithContext(ctx context.Context, lane string, tas
 	}
 
 	logger := tracing.LoggerFromContext(ctx, log.Logger).With().Str("session_key", lane).Logger()
+
+	// Check for request ID for idempotency
+	requestID := tracing.GetRequestID(ctx)
+	if requestID != "" {
+		// Check dedup cache
+		if cachedResult, found := cq.dedupCache.Get(requestID); found {
+			logger.Info().
+				Str("requestId", requestID).
+				Str("lane", lane).
+				Msg("Request already processed, returning cached result")
+
+			span.SetAttributes(attribute.Bool("cache_hit", true))
+			return cachedResult.value, cachedResult.err
+		}
+		span.SetAttributes(attribute.Bool("cache_hit", false))
+	}
 
 	// Ensure lane exists
 	cq.ensureLane(lane)
@@ -211,6 +230,12 @@ func (cq *CommandQueue) EnqueueWithContext(ctx context.Context, lane string, tas
 
 	// Wait for result
 	result := <-record.result
+
+	// Cache result if request ID is present
+	if requestID != "" {
+		cq.dedupCache.Set(requestID, result)
+	}
+
 	if result.err != nil {
 		span.RecordError(result.err)
 		span.SetStatus(codes.Error, result.err.Error())
