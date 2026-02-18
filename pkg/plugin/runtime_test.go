@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -224,6 +225,57 @@ func TestToolRegistry_GetByPlugin(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type fakePluginClient struct {
+	pingErr   error
+	pingCount int
+}
+
+func (f *fakePluginClient) Activate(context.Context, PluginAPI, map[string]any) error { return nil }
+func (f *fakePluginClient) Deactivate(context.Context) error                          { return nil }
+func (f *fakePluginClient) GetTools(context.Context) ([]ToolDefinition, error)        { return nil, nil }
+func (f *fakePluginClient) ExecuteTool(context.Context, string, map[string]any) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+func (f *fakePluginClient) ExecuteHook(context.Context, HookEvent) error { return nil }
+func (f *fakePluginClient) ExecuteGatewayMethod(context.Context, string, map[string]any) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+func (f *fakePluginClient) Ping(context.Context) error {
+	f.pingCount++
+	return f.pingErr
+}
+
+func TestPluginRuntime_CheckHealth(t *testing.T) {
+	runtime := NewPluginRuntime(zerolog.Nop(), PluginRuntimeConfig{})
+	client := &fakePluginClient{pingErr: errors.New("boom")}
+
+	plugin := &LoadedPlugin{
+		ID:       "test-plugin",
+		State:    StateEnabled,
+		Client:   client,
+		Manifest: PluginManifest{ID: "test-plugin", Name: "Test Plugin", Version: "1.0.0"},
+	}
+
+	if err := runtime.registry.Register(plugin); err != nil {
+		t.Fatalf("failed to register plugin: %v", err)
+	}
+
+	if err := runtime.CheckHealth(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	record, ok := runtime.registry.Get("test-plugin")
+	if !ok {
+		t.Fatalf("plugin record missing")
+	}
+	if client.pingCount != 1 {
+		t.Fatalf("expected ping count 1, got %d", client.pingCount)
+	}
+	if record.LastError == nil {
+		t.Fatalf("expected health check error to be recorded")
 	}
 }
 

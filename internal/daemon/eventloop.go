@@ -46,6 +46,13 @@ func (e *EventLoop) processTasks(ctx context.Context) {
 		}
 	}
 
+	// Check plugin health (if configured)
+	if e.daemon.pluginRuntime != nil {
+		if err := e.daemon.pluginRuntime.CheckHealth(ctx); err != nil {
+			e.daemon.logger.Warn().Err(err).Msg("Plugin health check failed")
+		}
+	}
+
 	// Log queue stats for monitoring
 	stats := e.daemon.queue.GetStats()
 	for lane, laneStats := range stats {
