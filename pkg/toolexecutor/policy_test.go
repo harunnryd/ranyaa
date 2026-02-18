@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/harun/ranya/pkg/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,6 +71,16 @@ func TestToolPolicy_IsToolAllowed_NilPolicy(t *testing.T) {
 // TestToolExecutor_Execute_PolicyEnforcement tests policy enforcement during execution
 func TestToolExecutor_Execute_PolicyEnforcement(t *testing.T) {
 	te := New()
+
+	approvalManager := NewApprovalManager(&MockApprovalHandler{AutoApprove: true})
+	te.SetApprovalManager(approvalManager)
+
+	sandboxCfg := sandbox.DefaultConfig()
+	sandboxManager := NewSandboxManager(sandboxCfg)
+	t.Cleanup(func() {
+		_ = sandboxManager.StopAll(context.Background())
+	})
+	te.SetSandboxManager(sandboxManager)
 
 	// Register test tools
 	tools := []string{"read_file", "write_file", "exec"}

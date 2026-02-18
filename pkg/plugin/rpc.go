@@ -101,6 +101,11 @@ func (s *PluginRPCServer) ExecuteGatewayMethod(args *ExecuteGatewayMethodArgs, r
 	return nil
 }
 
+func (s *PluginRPCServer) Ping(args interface{}, resp *error) error {
+	*resp = s.Impl.Ping(context.Background())
+	return nil
+}
+
 // PluginRPCClient is the RPC client that talks to PluginRPCServer
 type PluginRPCClient struct {
 	client *rpc.Client
@@ -155,4 +160,13 @@ func (c *PluginRPCClient) ExecuteGatewayMethod(ctx context.Context, name string,
 		return nil, resp.Error
 	}
 	return resp.Result, nil
+}
+
+func (c *PluginRPCClient) Ping(ctx context.Context) error {
+	var resp error
+	err := c.client.Call("Plugin.Ping", new(interface{}), &resp)
+	if err != nil {
+		return err
+	}
+	return resp
 }

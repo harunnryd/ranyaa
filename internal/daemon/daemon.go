@@ -102,8 +102,9 @@ func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 
 	observability.EnsureRegistered()
 	if err := tracing.InitOpenTelemetry("ranya-daemon"); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to initialize tracing: %w", err)
+		log.Warn().Err(err).Msg("Failed to initialize tracing, continuing without distributed tracing")
+	} else {
+		log.Info().Msg("Tracing initialized successfully")
 	}
 
 	d := &Daemon{
@@ -147,6 +148,14 @@ func New(cfg *config.Config, log *logger.Logger) (*Daemon, error) {
 func (d *Daemon) initializeCoreModules() error {
 	d.queue = commandqueue.New()
 	d.logger.Info().Msg("Command queue initialized")
+
+	// Initialize audit logger
+	auditPath := filepath.Join(d.config.DataDir, "audit.log")
+	if err := observability.InitAuditLogger(auditPath); err != nil {
+		d.logger.Warn().Err(err).Msg("Failed to initialize audit logger, using default stderr")
+	} else {
+		d.logger.Info().Str("path", auditPath).Msg("Audit logger initialized")
+	}
 
 	hookManager, err := newHookManager(d.config.Hooks, d.logger.GetZerolog())
 	if err != nil {
@@ -203,6 +212,16 @@ func (d *Daemon) initializeCoreModules() error {
 	if d.config.WorkspacePath != "" {
 		sandboxCfg.FilesystemAccess.AllowedPaths = append(sandboxCfg.FilesystemAccess.AllowedPaths, d.config.WorkspacePath)
 	}
+
+	// Verify Docker availability if runtime is set to docker
+	if sandboxCfg.Runtime == sandbox.RuntimeDocker {
+		if err := sandbox.CheckDocker(); err != nil {
+			d.logger.Warn().Err(err).Msg("Docker is not available - docker sandboxing will fail if required")
+		} else {
+			d.logger.Info().Msg("Docker availability verified for tool sandboxing")
+		}
+	}
+
 	d.toolExecutor.SetSandboxManager(toolexecutor.NewSandboxManager(sandboxCfg))
 	d.logger.Info().Msg("Tool executor initialized")
 
@@ -214,12 +233,13 @@ func (d *Daemon) initializeCoreModules() error {
 	if d.config.WorkspacePath != "" {
 		workspaceMgr, err := workspace.NewWorkspaceManager(workspace.WorkspaceConfig{
 			WorkspacePath: d.config.WorkspacePath,
+			OnReload:      d.handleWorkspaceReload,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create workspace manager: %w", err)
 		}
 		d.workspaceMgr = workspaceMgr
-		d.logger.Info().Str("path", d.config.WorkspacePath).Msg("Workspace manager initialized")
+		d.logger.Info().Str("path", d.config.WorkspacePath).Msg("Workspace manager initialized with hot-reload support")
 	}
 
 	agentRunner, err := newAgentRunner(agent.Config{
@@ -697,7 +717,12 @@ func (d *Daemon) Start() error {
 	}
 
 	// Start cron service
-	logger.Info().Msg("Cron service started")
+	if d.cronService != nil {
+		if err := d.cronService.Start(); err != nil {
+			return fmt.Errorf("failed to start cron service: %w", err)
+		}
+		logger.Info().Msg("Cron service started")
+	}
 
 	// Start routing service
 	if d.routingService != nil {
@@ -792,7 +817,20 @@ func (d *Daemon) Stop() error {
 	}
 
 	// Stop cron service
+	if d.cronService != nil {
+		if err := d.cronService.Stop(); err != nil {
+			logger.Error().Err(err).Msg("Failed to stop cron service")
+		}
+	}
 	logger.Info().Msg("Cron service stopped")
+
+	// Stop command queue
+	if d.queue != nil {
+		if err := d.queue.Close(); err != nil {
+			logger.Error().Err(err).Msg("Failed to close command queue")
+		}
+	}
+	logger.Info().Msg("Command queue stopped")
 
 	// Stop routing service
 	if d.routingService != nil {
@@ -891,6 +929,11 @@ func (d *Daemon) Stop() error {
 		}
 		cancel()
 		d.tracingEnabled = false
+	}
+
+	// Close audit logger
+	if err := observability.GetAuditLogger().Close(); err != nil {
+		logger.Error().Err(err).Msg("Failed to close audit logger")
 	}
 
 	logger.Info().Msg("Daemon stopped successfully")
@@ -1036,6 +1079,42 @@ func (d *Daemon) GetBrowserContext() *browser.BrowserServerContext {
 // GetPluginRuntime returns the plugin runtime
 func (d *Daemon) GetPluginRuntime() *plugin.PluginRuntime {
 	return d.pluginRuntime
+}
+
+func (d *Daemon) handleWorkspaceReload(file *workspace.WorkspaceFile) {
+	d.logger.Info().Str("path", file.Path).Str("type", string(file.Type)).Msg("Workspace file changed, triggering reload")
+
+	switch file.Type {
+	case workspace.FileTypeAgents:
+		agents := workspace.ParseAgentsMarkdown(file.Content)
+		if len(agents) > 0 {
+			d.mu.Lock()
+			d.config.Agents = agents
+			d.mu.Unlock()
+			d.logger.Info().Int("count", len(agents)).Msg("Reloaded agent configurations from AGENTS.md")
+			observability.RecordConfigAudit(context.Background(), "reload:agents", "system", map[string]interface{}{
+				"count": len(agents),
+				"path":  file.Path,
+			})
+		}
+
+	case workspace.FileTypeSoul:
+		soul := workspace.ParseSoulMarkdown(file.Content)
+		if soul != "" {
+			d.mu.Lock()
+			// Update default agent system prompt or similar
+			for i := range d.config.Agents {
+				if d.config.Agents[i].ID == "default" {
+					d.config.Agents[i].SystemPrompt = soul
+				}
+			}
+			d.mu.Unlock()
+			d.logger.Info().Msg("Reloaded system personality from SOUL.md")
+			observability.RecordConfigAudit(context.Background(), "reload:soul", "system", map[string]interface{}{
+				"path": file.Path,
+			})
+		}
+	}
 }
 
 // GetOrchestrator returns the orchestrator

@@ -15,6 +15,18 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// CheckDocker verifies that the Docker daemon is available and responsive.
+func CheckDocker() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "ps", "-q")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker is not available or not running: %w", err)
+	}
+	return nil
+}
+
 // DockerSandbox implements sandboxed execution using ephemeral Docker containers.
 type DockerSandbox struct {
 	config  Config

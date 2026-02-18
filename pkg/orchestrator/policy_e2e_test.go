@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/harun/ranya/pkg/sandbox"
 	"github.com/harun/ranya/pkg/toolexecutor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,16 @@ import (
 func TestE2E_ToolPolicyEnforcement_AgentExecution(t *testing.T) {
 	// Setup tool executor
 	te := toolexecutor.New()
+
+	approvalManager := toolexecutor.NewApprovalManager(autoApproveHandler{})
+	te.SetApprovalManager(approvalManager)
+
+	sandboxCfg := sandbox.DefaultConfig()
+	sandboxManager := toolexecutor.NewSandboxManager(sandboxCfg)
+	t.Cleanup(func() {
+		_ = sandboxManager.StopAll(context.Background())
+	})
+	te.SetSandboxManager(sandboxManager)
 
 	// Register test tools
 	tools := []string{"read_file", "write_file", "exec", "search"}
@@ -108,4 +119,13 @@ func TestE2E_ToolPolicyEnforcement_AgentExecution(t *testing.T) {
 			}
 		})
 	}
+}
+
+type autoApproveHandler struct{}
+
+func (autoApproveHandler) RequestApproval(ctx context.Context, req toolexecutor.ApprovalRequest) (toolexecutor.ApprovalResponse, error) {
+	return toolexecutor.ApprovalResponse{
+		Approved: true,
+		Reason:   "auto-approved",
+	}, nil
 }

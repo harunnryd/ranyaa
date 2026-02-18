@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/harun/ranya/pkg/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -219,6 +220,17 @@ func TestToolExecutor_Execute_WorkspacePathEnforcement(t *testing.T) {
 
 	err := te.RegisterTool(def)
 	require.NoError(t, err)
+
+	approvalManager := NewApprovalManager(&MockApprovalHandler{AutoApprove: true})
+	te.SetApprovalManager(approvalManager)
+
+	sandboxCfg := sandbox.DefaultConfig()
+	sandboxCfg.FilesystemAccess.AllowedPaths = append(sandboxCfg.FilesystemAccess.AllowedPaths, tmpDir)
+	sandboxManager := NewSandboxManager(sandboxCfg)
+	t.Cleanup(func() {
+		_ = sandboxManager.StopAll(context.Background())
+	})
+	te.SetSandboxManager(sandboxManager)
 
 	execCtx := &ExecutionContext{
 		WorkingDir: tmpDir,

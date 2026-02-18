@@ -66,9 +66,9 @@ func (s *Server) RegisterApprovalMethods(manager *toolexecutor.ApprovalManager) 
 		}
 
 		// Get actor from context/client ID if available
-		actor := "unknown"
-		if clientID, ok := ctx.Value("clientID").(string); ok {
-			actor = clientID
+		actor := clientIDFromContext(ctx)
+		if actor == "" {
+			actor = "unknown"
 		}
 
 		if err := manager.ResolveApproval(id, action, actor); err != nil {

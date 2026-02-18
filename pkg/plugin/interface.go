@@ -25,6 +25,9 @@ type Plugin interface {
 
 	// ExecuteGatewayMethod executes a registered gateway method
 	ExecuteGatewayMethod(ctx context.Context, name string, params map[string]any) (map[string]any, error)
+
+	// Ping checks if the plugin is healthy and responsive
+	Ping(ctx context.Context) error
 }
 
 // PluginAPI is the interface provided to plugins for registering extensions

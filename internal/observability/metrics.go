@@ -10,10 +10,11 @@ import (
 )
 
 type moduleMetrics struct {
-	queueSize    *prometheus.GaugeVec
-	enqueueTotal *prometheus.CounterVec
-	dequeueTotal *prometheus.CounterVec
-	taskDuration *prometheus.HistogramVec
+	queueSize        *prometheus.GaugeVec
+	enqueueTotal     *prometheus.CounterVec
+	dequeueTotal     *prometheus.CounterVec
+	taskDuration     *prometheus.HistogramVec
+	taskWaitDuration *prometheus.HistogramVec
 
 	activeSessions       prometheus.Gauge
 	sessionLoadDuration  prometheus.Histogram
@@ -66,6 +67,14 @@ func getMetrics() *moduleMetrics {
 					Name:    "task_duration_seconds",
 					Help:    "Task execution duration in seconds by lane.",
 					Buckets: prometheus.DefBuckets,
+				},
+				[]string{"lane"},
+			),
+			taskWaitDuration: prometheus.NewHistogramVec(
+				prometheus.HistogramOpts{
+					Name:    "task_wait_duration_seconds",
+					Help:    "Task wait time in queue in seconds by lane.",
+					Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 				},
 				[]string{"lane"},
 			),
@@ -167,6 +176,7 @@ func getMetrics() *moduleMetrics {
 			m.enqueueTotal,
 			m.dequeueTotal,
 			m.taskDuration,
+			m.taskWaitDuration,
 			m.activeSessions,
 			m.sessionLoadDuration,
 			m.sessionSaveDuration,
@@ -210,6 +220,10 @@ func SetQueueSize(lane string, queueSize int) {
 }
 
 func RecordQueueCompletion(lane string, duration time.Duration, success bool, queueSize int) {
+	RecordQueueCompletionWithWait(lane, duration, 0, success, queueSize)
+}
+
+func RecordQueueCompletionWithWait(lane string, duration, waitDuration time.Duration, success bool, queueSize int) {
 	m := getMetrics()
 	status := "error"
 	if success {
@@ -217,6 +231,9 @@ func RecordQueueCompletion(lane string, duration time.Duration, success bool, qu
 	}
 	m.dequeueTotal.WithLabelValues(lane, status).Inc()
 	m.taskDuration.WithLabelValues(lane).Observe(duration.Seconds())
+	if waitDuration > 0 {
+		m.taskWaitDuration.WithLabelValues(lane).Observe(waitDuration.Seconds())
+	}
 	m.queueSize.WithLabelValues(lane).Set(float64(queueSize))
 }
 

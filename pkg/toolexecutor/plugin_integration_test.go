@@ -175,6 +175,9 @@ func TestPluginToolExecutionRouting(t *testing.T) {
 	te := New()
 	runtime := newMockPluginRuntime()
 
+	approvalManager := NewApprovalManager(&MockApprovalHandler{AutoApprove: true})
+	te.SetApprovalManager(approvalManager)
+
 	// Add a plugin with multiple tools
 	plugin := runtime.addPlugin("data-plugin", []string{"database:read", "database:write"})
 
@@ -554,6 +557,9 @@ func TestMultiplePluginToolRegistration(t *testing.T) {
 	te := New()
 	runtime := newMockPluginRuntime()
 
+	approvalManager := NewApprovalManager(&MockApprovalHandler{AutoApprove: true})
+	te.SetApprovalManager(approvalManager)
+
 	// Register tools from multiple plugins
 	plugins := []struct {
 		id          string
@@ -594,7 +600,7 @@ func TestMultiplePluginToolRegistration(t *testing.T) {
 	// Execute each tool and verify routing
 	for _, p := range plugins {
 		result := te.Execute(context.Background(), p.toolName, map[string]interface{}{}, nil)
-		assert.True(t, result.Success)
+		require.True(t, result.Success, "tool %s failed: %s", p.toolName, result.Error)
 
 		resultMap := result.Output.(map[string]interface{})
 		assert.Equal(t, p.id, resultMap["plugin"])

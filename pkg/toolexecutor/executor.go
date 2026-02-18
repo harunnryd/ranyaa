@@ -451,6 +451,8 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 		metadata["decision"] = decision
 		metadata["category"] = string(category)
 
+		observability.RecordToolAudit(ctx, toolName, agentID, "denied", metadata)
+
 		return ToolResult{
 			Success:  false,
 			Error:    fmt.Sprintf("tool '%s' is not allowed by agent policy: %s", toolName, eval.Reason),
@@ -490,60 +492,96 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 	}
 
 	// Enforce approval workflow for tools that require it (both plugin and built-in)
-	if tool.ApprovalRequired || (tool.PluginID != "" && te.requiresApproval(tool)) {
+	requiresApproval := tool.ApprovalRequired || (tool.PluginID != "" && te.requiresApproval(tool))
+	if requiresApproval {
 		te.mu.RLock()
 		approvalManager := te.approvalManager
 		te.mu.RUnlock()
 
-		if approvalManager != nil {
-			approvalReq := ApprovalRequest{
-				Command: toolName,
-				Cwd:     "",
-				Context: map[string]string{
-					"tool":     toolName,
-					"category": string(category),
-				},
+		if approvalManager == nil {
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, false)
+			err := fmt.Errorf("approval manager is required for tool '%s'", toolName)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			metadata := map[string]interface{}{
+				"duration":          duration.Milliseconds(),
+				"plugin":            tool.PluginID,
+				"category":          string(category),
+				"approval_required": true,
+				"approval_missing":  true,
 			}
-			if tool.PluginID != "" {
-				approvalReq.Context["plugin"] = tool.PluginID
+			actor := agentID
+			if execCtx != nil && execCtx.AgentID != "" {
+				actor = execCtx.AgentID
 			}
-			if execCtx != nil {
-				approvalReq.Cwd = execCtx.WorkingDir
-				approvalReq.AgentID = execCtx.AgentID
+			observability.RecordToolAudit(ctx, toolName, actor, "denied", metadata)
+			return ToolResult{
+				Success:  false,
+				Error:    err.Error(),
+				Metadata: metadata,
 			}
+		}
 
-			approved, approvalErr := approvalManager.RequestApproval(ctx, approvalReq)
-			if approvalErr != nil {
-				duration := time.Since(startTime)
-				observability.RecordToolExecution(toolName, duration, false)
-				span.RecordError(approvalErr)
-				span.SetStatus(codes.Error, "tool approval failed")
-				return ToolResult{
-					Success: false,
-					Error:   fmt.Sprintf("tool approval failed: %v", approvalErr),
-					Metadata: map[string]interface{}{
-						"duration":        duration.Milliseconds(),
-						"plugin":          tool.PluginID,
-						"category":        string(category),
-						"approval_failed": true,
-					},
-				}
-			}
+		approvalReq := ApprovalRequest{
+			Command: toolName,
+			Cwd:     "",
+			Context: map[string]string{
+				"tool":     toolName,
+				"category": string(category),
+			},
+		}
+		if tool.PluginID != "" {
+			approvalReq.Context["plugin"] = tool.PluginID
+		}
+		if execCtx != nil {
+			approvalReq.Cwd = execCtx.WorkingDir
+			approvalReq.AgentID = execCtx.AgentID
+		}
 
-			if !approved {
-				duration := time.Since(startTime)
-				observability.RecordToolExecution(toolName, duration, false)
-				span.SetStatus(codes.Error, "tool execution denied by user")
-				return ToolResult{
-					Success: false,
-					Error:   "tool execution denied by user",
-					Metadata: map[string]interface{}{
-						"duration":        duration.Milliseconds(),
-						"plugin":          tool.PluginID,
-						"category":        string(category),
-						"approval_denied": true,
-					},
-				}
+		approved, approvalErr := approvalManager.RequestApproval(ctx, approvalReq)
+		if approvalErr != nil {
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, false)
+			span.RecordError(approvalErr)
+			span.SetStatus(codes.Error, "tool approval failed")
+			metadata := map[string]interface{}{
+				"duration":        duration.Milliseconds(),
+				"plugin":          tool.PluginID,
+				"category":        string(category),
+				"approval_failed": true,
+			}
+			actor := agentID
+			if execCtx != nil && execCtx.AgentID != "" {
+				actor = execCtx.AgentID
+			}
+			observability.RecordToolAudit(ctx, toolName, actor, "denied", metadata)
+			return ToolResult{
+				Success:  false,
+				Error:    fmt.Sprintf("tool approval failed: %v", approvalErr),
+				Metadata: metadata,
+			}
+		}
+
+		if !approved {
+			duration := time.Since(startTime)
+			observability.RecordToolExecution(toolName, duration, false)
+			span.SetStatus(codes.Error, "approval denied by user")
+			metadata := map[string]interface{}{
+				"duration":        duration.Milliseconds(),
+				"plugin":          tool.PluginID,
+				"category":        string(category),
+				"approval_denied": true,
+			}
+			actor := agentID
+			if execCtx != nil && execCtx.AgentID != "" {
+				actor = execCtx.AgentID
+			}
+			observability.RecordToolAudit(ctx, toolName, actor, "denied", metadata)
+			return ToolResult{
+				Success:  false,
+				Error:    "approval denied by user",
+				Metadata: metadata,
 			}
 		}
 	}
@@ -626,7 +664,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Bool("truncated", truncated).
 			Msg("Tool execution completed")
 
-		return ToolResult{
+		res := ToolResult{
 			Success:   true,
 			Output:    output,
 			Truncated: truncated,
@@ -639,6 +677,13 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			},
 		}
 
+		actor := agentID
+		if execCtx != nil && execCtx.AgentID != "" {
+			actor = execCtx.AgentID
+		}
+		observability.RecordToolAudit(ctx, toolName, actor, "success", res.Metadata)
+		return res
+
 	case err := <-errChan:
 		duration := time.Since(startTime)
 		observability.RecordToolExecution(toolName, duration, false)
@@ -650,6 +695,18 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			Dur("duration", duration).
 			Err(err).
 			Msg("Tool execution failed")
+
+		metadata := map[string]interface{}{
+			"duration": duration.Milliseconds(),
+			"plugin":   tool.PluginID,
+			"category": string(category),
+			"error":    err.Error(),
+		}
+		actor := agentID
+		if execCtx != nil && execCtx.AgentID != "" {
+			actor = execCtx.AgentID
+		}
+		observability.RecordToolAudit(ctx, toolName, actor, "failure", metadata)
 
 		return ToolResult{
 			Success: false,

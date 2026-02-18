@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/harun/ranya/internal/config"
+	"github.com/harun/ranya/internal/observability"
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/channels"
 	"github.com/harun/ranya/pkg/gateway"
 	"github.com/harun/ranya/pkg/orchestrator"
 	"github.com/harun/ranya/pkg/planner"
+	"github.com/harun/ranya/pkg/routing"
 	"github.com/harun/ranya/pkg/toolexecutor"
 )
 
@@ -81,11 +83,16 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 	// Pre-execution moderation check
 	if d.contentFilter != nil {
 		if err := d.contentFilter.CheckPrompt(req.Prompt); err != nil {
+			observability.RecordSecurityAudit(ctx, "moderation_event", req.SessionKey, "blocked", map[string]interface{}{
+				"stage":       "pre",
+				"session_key": req.SessionKey,
+				"reason":      err.Error(),
+			})
 			return agent.AgentResult{
 				Response:   "Your request was rejected by the content moderation policy.",
 				SessionKey: req.SessionKey,
 				Aborted:    true,
-			}, nil, fmt.Errorf("moderation: %w", err)
+			}, nil, fmt.Errorf("policy violation: %w", err)
 		}
 	}
 
@@ -130,7 +137,17 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 		stepStart := time.Now()
 
 		stepPrompt, stepCfg := buildStepInput(req.Prompt, previousOutput, runCfg, i, len(plan.Steps))
-		result, runErr := d.dispatchPlannedStep(ctx, req, agentCfg, stepPrompt, stepCfg)
+		stepCtx := ctx
+		stepRequestID := req.RequestID
+		if strings.TrimSpace(stepRequestID) == "" {
+			stepRequestID = tracing.NewTraceID()
+		} else {
+			stepRequestID = fmt.Sprintf("%s:step-%d", stepRequestID, i+1)
+		}
+		stepCtx = tracing.WithRequestID(stepCtx, stepRequestID)
+
+		useOrchestrator := len(plan.Steps) > 1
+		result, runErr := d.dispatchPlannedStep(stepCtx, req, agentCfg, stepPrompt, stepCfg, useOrchestrator)
 		duration := time.Since(stepStart)
 
 		if runErr != nil {
@@ -169,8 +186,14 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 	// Post-execution moderation check
 	if d.contentFilter != nil && finalResult.Response != "" {
 		if err := d.contentFilter.CheckResponse(finalResult.Response); err != nil {
+			observability.RecordSecurityAudit(ctx, "moderation_event", req.SessionKey, "blocked", map[string]interface{}{
+				"stage":       "post",
+				"session_key": req.SessionKey,
+				"reason":      err.Error(),
+			})
 			// Redact or block
 			finalResult.Response = "[Content Redacted by Moderation Policy]"
+			finalResult.Aborted = true
 			// We don't return error here to preserve the plan execution record, but we modify result
 			logger.Warn().Err(err).Msg("Response blocked by moderation")
 		}
@@ -185,24 +208,8 @@ func (d *Daemon) dispatchPlannedStep(
 	agentCfg config.AgentConfig,
 	prompt string,
 	runCfg agent.AgentConfig,
+	useOrchestrator bool,
 ) (agent.AgentResult, error) {
-	instance, err := d.orchestrator.CreateInstance(agentCfg.ID)
-	if err != nil {
-		return agent.AgentResult{}, fmt.Errorf("failed to dispatch orchestrator instance: %w", err)
-	}
-
-	logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog())
-	logger.Info().
-		Str("event", "orchestrator:dispatch").
-		Str("agent_id", agentCfg.ID).
-		Str("instance_id", instance.ID).
-		Msg("orchestrator:dispatch")
-
-	if err := d.orchestrator.UpdateInstanceStatus(instance.ID, orchestrator.AgentStatusRunning); err != nil {
-		_ = d.orchestrator.StopInstance(instance.ID)
-		return agent.AgentResult{}, fmt.Errorf("failed to set orchestrator instance running: %w", err)
-	}
-
 	toolPolicy := &toolexecutor.ToolPolicy{
 		Allow: append([]string{}, agentCfg.Tools.Allow...),
 		Deny:  append([]string{}, agentCfg.Tools.Deny...),
@@ -227,7 +234,7 @@ func (d *Daemon) dispatchPlannedStep(
 		sandboxPolicy["docker_image"] = image
 	}
 
-	result, runErr := d.agentRunner.RunWithContext(ctx, agent.AgentRunParams{
+	runParams := agent.AgentRunParams{
 		Prompt:        prompt,
 		SessionKey:    req.SessionKey,
 		Config:        runCfg,
@@ -235,7 +242,30 @@ func (d *Daemon) dispatchPlannedStep(
 		AgentID:       agentCfg.ID,
 		ToolPolicy:    toolPolicy,
 		SandboxPolicy: sandboxPolicy,
-	})
+	}
+
+	if !useOrchestrator || d.orchestrator == nil {
+		return d.agentRunner.RunWithContext(ctx, runParams)
+	}
+
+	instance, err := d.orchestrator.CreateInstance(agentCfg.ID)
+	if err != nil {
+		return agent.AgentResult{}, fmt.Errorf("failed to dispatch orchestrator instance: %w", err)
+	}
+
+	logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog())
+	logger.Info().
+		Str("event", "orchestrator:dispatch").
+		Str("agent_id", agentCfg.ID).
+		Str("instance_id", instance.ID).
+		Msg("orchestrator:dispatch")
+
+	if err := d.orchestrator.UpdateInstanceStatus(instance.ID, orchestrator.AgentStatusRunning); err != nil {
+		_ = d.orchestrator.StopInstance(instance.ID)
+		return agent.AgentResult{}, fmt.Errorf("failed to set orchestrator instance running: %w", err)
+	}
+
+	result, runErr := d.agentRunner.RunWithContext(ctx, runParams)
 
 	if runErr != nil {
 		_ = d.orchestrator.UpdateInstanceStatus(instance.ID, orchestrator.AgentStatusFailed)
@@ -261,8 +291,8 @@ func (d *Daemon) resolveAgentConfig(req RuntimeRequest) (config.AgentConfig, err
 
 	requestedAgentID := strings.TrimSpace(req.AgentID)
 	if requestedAgentID == "" {
-		if autoID := d.selectTieredAgentID(req); autoID != "" {
-			if cfg, ok := d.findAgentConfig(autoID); ok {
+		if routedID := d.resolveRoutedAgentID(req); routedID != "" {
+			if cfg, ok := d.findAgentConfig(routedID); ok {
 				return cfg, nil
 			}
 		}
@@ -301,87 +331,49 @@ func (d *Daemon) findAgentByRole(role string) (config.AgentConfig, bool) {
 	return config.AgentConfig{}, false
 }
 
-func (d *Daemon) selectTieredAgentID(req RuntimeRequest) string {
-	prompt := strings.ToLower(strings.TrimSpace(req.Prompt))
-	hasTools := len(req.RunConfig.Tools) > 0
+func (d *Daemon) resolveRoutedAgentID(req RuntimeRequest) string {
+	if d.routingService == nil {
+		return ""
+	}
 
-	if captain, ok := d.findAgentByRole("captain"); ok {
-		if shouldRouteToCaptain(prompt, hasTools) {
-			return captain.ID
+	routingCtx := routing.RoutingContext{
+		MessageID: req.SessionKey,
+		Content:   req.Prompt,
+		Metadata:  req.Metadata,
+		Timestamp: time.Now(),
+		Source:    req.Source,
+		Channel:   req.Source,
+		PeerID:    runtimeRoutingMetadataValue(req.Metadata, "peer", "peer_id", "peerId", "chat_id", "chatId"),
+		GuildID:   runtimeRoutingMetadataValue(req.Metadata, "guild_id", "guildId"),
+		TeamID:    runtimeRoutingMetadataValue(req.Metadata, "team_id", "teamId"),
+		AccountID: runtimeRoutingMetadataValue(req.Metadata, "account_id", "accountId", "account"),
+	}
+
+	route, err := d.routingService.ResolveRoute(routingCtx)
+	if err != nil || route == nil || strings.TrimSpace(route.Handler) == "" {
+		return ""
+	}
+
+	return strings.TrimSpace(route.Handler)
+}
+
+func runtimeRoutingMetadataValue(metadata map[string]interface{}, keys ...string) string {
+	if metadata == nil {
+		return ""
+	}
+	for _, key := range keys {
+		raw, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		if value, ok := raw.(string); ok {
+			trimmed := strings.TrimSpace(value)
+			if trimmed != "" {
+				return trimmed
+			}
 		}
 	}
-
-	if executor, ok := d.findAgentByRole("executor"); ok {
-		if shouldRouteToExecutor(prompt, hasTools) {
-			return executor.ID
-		}
-	}
-
-	if critic, ok := d.findAgentByRole("critic"); ok {
-		if shouldRouteToCritic(prompt, hasTools) {
-			return critic.ID
-		}
-	}
-
-	if general, ok := d.findAgentByRole("general"); ok {
-		return general.ID
-	}
-
 	return ""
-}
-
-func shouldRouteToCaptain(prompt string, hasTools bool) bool {
-	if prompt == "" {
-		return false
-	}
-
-	if hasTools && (strings.Contains(prompt, "plan") || strings.Contains(prompt, "strategy") || strings.Contains(prompt, "coordinate")) {
-		return true
-	}
-	if len(prompt) > 280 {
-		return true
-	}
-
-	markers := []string{" then ", " and then ", " after that ", " finally ", "\n1.", "\n- "}
-	for _, marker := range markers {
-		if strings.Contains(prompt, marker) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func shouldRouteToExecutor(prompt string, hasTools bool) bool {
-	if hasTools {
-		return true
-	}
-
-	markers := []string{"execute", "run", "build", "implement", "apply", "fix", "create"}
-	for _, marker := range markers {
-		if strings.Contains(prompt, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func shouldRouteToCritic(prompt string, hasTools bool) bool {
-	if hasTools || prompt == "" {
-		return false
-	}
-
-	if len(prompt) <= 140 && !strings.Contains(prompt, "\n") {
-		return true
-	}
-
-	markers := []string{"review", "critique", "refactor", "improve", "format", "summarize"}
-	for _, marker := range markers {
-		if strings.Contains(prompt, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func mergeRunConfig(base config.AgentConfig, override agent.AgentConfig) agent.AgentConfig {
@@ -541,7 +533,72 @@ func (d *Daemon) validateStepResult(ctx context.Context, req RuntimeRequest, ori
 		return true, "", nil
 	}
 
-	// This is where we would call the critic.
-	// For now, we return true to avoid blocking execution without a real critic implementation.
-	return true, "", nil
+	criticPrompt := fmt.Sprintf(
+		"Original request:\n%s\n\nProposed response:\n%s\n\nAssess whether the response fully and correctly satisfies the original request. Reply with APPROVED or REJECTED followed by a short reason.",
+		originalPrompt,
+		stepResult,
+	)
+
+	criticSystemPrompt := strings.TrimSpace(critic.SystemPrompt)
+	if criticSystemPrompt == "" {
+		criticSystemPrompt = "You are a strict reviewer. Respond with APPROVED or REJECTED and a short reason."
+	} else {
+		criticSystemPrompt = fmt.Sprintf("%s\n\nRespond with APPROVED or REJECTED and a short reason.", criticSystemPrompt)
+	}
+
+	criticCfg := agent.AgentConfig{
+		Model:       critic.Model,
+		Temperature: 0.1,
+		MaxTokens:   256,
+		SystemPrompt: criticSystemPrompt,
+		Tools:        nil,
+		UseMemory:    false,
+		Streaming:    false,
+		MaxRetries:   1,
+	}
+
+	sandboxMode := critic.Sandbox.Mode
+	if sandboxMode == "" {
+		sandboxMode = "tools"
+	}
+	sandboxScope := critic.Sandbox.Scope
+	if sandboxScope == "" {
+		sandboxScope = "session"
+	}
+	sandboxPolicy := map[string]interface{}{
+		"mode":  sandboxMode,
+		"scope": sandboxScope,
+	}
+	if runtime := strings.TrimSpace(critic.Sandbox.Runtime); runtime != "" {
+		sandboxPolicy["runtime"] = runtime
+	}
+	if image := strings.TrimSpace(critic.Sandbox.DockerImage); image != "" {
+		sandboxPolicy["docker_image"] = image
+	}
+
+	critCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	result, err := d.agentRunner.RunWithContext(critCtx, agent.AgentRunParams{
+		Prompt:     criticPrompt,
+		SessionKey: fmt.Sprintf("%s:critic", req.SessionKey),
+		Config:     criticCfg,
+		CWD:        req.CWD,
+		AgentID:    critic.ID,
+		ToolPolicy: &toolexecutor.ToolPolicy{Deny: []string{"*"}},
+		SandboxPolicy: sandboxPolicy,
+	})
+	if err != nil {
+		return false, "", fmt.Errorf("critic evaluation failed: %w", err)
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(result.Response))
+	if strings.HasPrefix(normalized, "approved") || strings.HasPrefix(normalized, "approve") || strings.HasPrefix(normalized, "yes") {
+		return true, result.Response, nil
+	}
+	if strings.HasPrefix(normalized, "rejected") || strings.HasPrefix(normalized, "reject") || strings.HasPrefix(normalized, "no") {
+		return false, result.Response, nil
+	}
+
+	return false, result.Response, fmt.Errorf("critic response not parseable: %s", result.Response)
 }

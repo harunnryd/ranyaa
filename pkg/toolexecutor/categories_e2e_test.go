@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/harun/ranya/pkg/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,6 +17,16 @@ func TestE2E_CategoryBasedPolicyWorkflow(t *testing.T) {
 	policyEngine := NewPolicyEngine()
 	evaluator := NewPolicyEvaluator(policyEngine)
 	matcher := NewCategoryMatcher(registry)
+
+	approvalManager := NewApprovalManager(&MockApprovalHandler{AutoApprove: true})
+	executor.SetApprovalManager(approvalManager)
+
+	sandboxCfg := sandbox.DefaultConfig()
+	sandboxManager := NewSandboxManager(sandboxCfg)
+	t.Cleanup(func() {
+		_ = sandboxManager.StopAll(context.Background())
+	})
+	executor.SetSandboxManager(sandboxManager)
 
 	// Step 1: Register tools with categories
 	tools := []struct {

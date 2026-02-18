@@ -214,6 +214,37 @@ func (r *PluginRuntime) DisablePlugin(pluginID string) error {
 	return nil
 }
 
+// CheckHealth performs a health check on all enabled plugins
+func (r *PluginRuntime) CheckHealth(ctx context.Context) error {
+	r.logger.Debug().Msg("Performing plugin health check")
+	records := r.registry.GetAll()
+
+	for _, record := range records {
+		if record.Plugin.State != StateEnabled || record.Plugin.Client == nil {
+			continue
+		}
+
+		if err := record.Plugin.Client.Ping(ctx); err != nil {
+			r.logger.Warn().
+				Err(err).
+				Str("plugin", record.Plugin.ID).
+				Msg("Plugin health check failed")
+
+			// Update record with error
+			_ = r.registry.RecordError(record.Plugin.ID, err)
+		} else {
+			// Clear error if it was failing but now succeeded
+			if record.LastError != nil {
+				r.logger.Info().Str("plugin", record.Plugin.ID).Msg("Plugin recovered and is now healthy")
+				_ = r.registry.Update(record.Plugin.ID, func(rec *PluginRecord) {
+					rec.LastError = nil
+				})
+			}
+		}
+	}
+	return nil
+}
+
 // UnloadPlugin unloads a plugin
 func (r *PluginRuntime) UnloadPlugin(pluginID string) error {
 	// Check for dependents

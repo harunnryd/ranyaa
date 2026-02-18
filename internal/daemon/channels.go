@@ -11,6 +11,7 @@ import (
 
 	"github.com/harun/ranya/internal/config"
 	"github.com/harun/ranya/internal/telegram"
+	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/channels"
 	"github.com/rs/zerolog"
@@ -139,7 +140,7 @@ func (c *telegramIngressChannel) Name() string {
 	return "telegram"
 }
 
-func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.DispatchFunc) error {
+func (c *telegramIngressChannel) Start(ctx context.Context, dispatch channels.DispatchFunc) error {
 	if c.bot == nil {
 		return fmt.Errorf("telegram bot is required")
 	}
@@ -196,7 +197,12 @@ func (c *telegramIngressChannel) Start(_ context.Context, dispatch channels.Disp
 		// Generate request ID for idempotency
 		requestID := fmt.Sprintf("telegram:%d:%d:%d", msgCtx.ChatID, msgCtx.MessageID, time.Now().Unix())
 
-		result, err := dispatch(context.Background(), channels.InboundMessage{
+		// Create context with tracing and lifecycle
+		taskCtx := tracing.WithRequestID(ctx, requestID)
+		taskCtx = tracing.WithSessionKey(taskCtx, sessionKey)
+		taskCtx = tracing.NewRequestContext(taskCtx)
+
+		result, err := dispatch(taskCtx, channels.InboundMessage{
 			Channel:    "telegram",
 			SessionKey: sessionKey,
 			Content:    content,

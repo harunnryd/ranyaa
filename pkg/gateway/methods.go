@@ -119,7 +119,7 @@ func (s *Server) handleAgentWait(ctx context.Context, params map[string]interfac
 
 	// Send completion event
 	if s.broadcaster != nil {
-		clientID, _ := ctx.Value("clientID").(string)
+		clientID := clientIDFromContext(ctx)
 		if clientID != "" {
 			s.broadcaster.BroadcastToClient(clientID, EventMessage{
 				Event:     "chat.complete",
@@ -196,7 +196,7 @@ func (s *Server) handleChatSend(ctx context.Context, params map[string]interface
 
 // streamRuntimeEvents streams runtime events to gateway clients
 func (s *Server) streamRuntimeEvents(ctx context.Context, sessionKey string, events <-chan agent.RuntimeEvent) {
-	clientID, _ := ctx.Value("clientID").(string)
+	clientID := clientIDFromContext(ctx)
 
 	// If no client ID (e.g. HTTP request), we do NOT stream to prevent leakage.
 	if clientID == "" {

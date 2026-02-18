@@ -1,6 +1,7 @@
 package commandqueue
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -16,23 +17,34 @@ type dedupCache struct {
 	entries map[string]*dedupEntry
 	ttl     time.Duration
 	mu      sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // newDedupCache creates a new deduplication cache
-func newDedupCache(ttl time.Duration) *dedupCache {
+func newDedupCache(ctx context.Context, ttl time.Duration) *dedupCache {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	cache := &dedupCache{
 		entries: make(map[string]*dedupEntry),
 		ttl:     ttl,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	// Start cleanup goroutine
 	go cache.cleanup()
 
 	return cache
+}
+
+func (dc *dedupCache) Stop() {
+	if dc.cancel != nil {
+		dc.cancel()
+	}
 }
 
 // Get retrieves a cached result if it exists and is not expired
@@ -69,15 +81,20 @@ func (dc *dedupCache) cleanup() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		dc.mu.Lock()
-		now := time.Now()
-		for requestID, entry := range dc.entries {
-			if now.Sub(entry.timestamp) > dc.ttl {
-				delete(dc.entries, requestID)
+	for {
+		select {
+		case <-dc.ctx.Done():
+			return
+		case <-ticker.C:
+			dc.mu.Lock()
+			now := time.Now()
+			for requestID, entry := range dc.entries {
+				if now.Sub(entry.timestamp) > dc.ttl {
+					delete(dc.entries, requestID)
+				}
 			}
+			dc.mu.Unlock()
 		}
-		dc.mu.Unlock()
 	}
 }
 

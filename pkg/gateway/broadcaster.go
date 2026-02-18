@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +14,7 @@ type EventBroadcaster struct {
 	clients *ClientRegistry
 	logger  zerolog.Logger
 	seq     uint64
+	mu      sync.Mutex
 }
 
 // NewEventBroadcaster creates a new event broadcaster
@@ -25,6 +27,8 @@ func NewEventBroadcaster(clients *ClientRegistry, logger zerolog.Logger) *EventB
 
 // Broadcast sends an event to all authenticated clients
 func (b *EventBroadcaster) Broadcast(event string, data interface{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	msg := EventMessage{
 		Type:      "event",
 		Event:     event,
@@ -37,6 +41,8 @@ func (b *EventBroadcaster) Broadcast(event string, data interface{}) {
 
 // BroadcastTyped sends a typed stream event with sequence metadata.
 func (b *EventBroadcaster) BroadcastTyped(msg EventMessage) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	msg.Type = "event"
 	if msg.Seq == 0 {
 		msg.Seq = b.nextSeq()
@@ -49,6 +55,8 @@ func (b *EventBroadcaster) BroadcastTyped(msg EventMessage) {
 
 // BroadcastToClient sends a typed stream event to a specific client
 func (b *EventBroadcaster) BroadcastToClient(clientID string, msg EventMessage) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	msg.Type = "event"
 	if msg.Seq == 0 {
 		msg.Seq = b.nextSeq()

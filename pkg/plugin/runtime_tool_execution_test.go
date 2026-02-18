@@ -41,6 +41,10 @@ func (m *mockPluginClient) ExecuteGatewayMethod(ctx context.Context, name string
 	return nil, nil
 }
 
+func (m *mockPluginClient) Ping(ctx context.Context) error {
+	return nil
+}
+
 func TestGetPluginForTool_Success(t *testing.T) {
 	logger := zerolog.Nop()
 	runtime := NewPluginRuntime(logger, PluginRuntimeConfig{})

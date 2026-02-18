@@ -89,7 +89,7 @@ func (m *WorkspaceManager) Init() error {
 
 	// Discover and load all files
 	fileCount := 0
-	err := filepath.Walk(m.workspacePath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(m.workspacePath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			log.Warn().
 				Err(err).
@@ -98,8 +98,12 @@ func (m *WorkspaceManager) Init() error {
 			return nil // Continue walking
 		}
 
-		// Skip directories
-		if info.IsDir() {
+		// Prune ignored directories early to avoid walking them
+		if d.IsDir() {
+			base := d.Name()
+			if (len(base) > 0 && base[0] == '.') || base == "node_modules" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 

@@ -93,6 +93,15 @@ func (f fixedProviderFactory) NewProvider(_ agent.AuthProfile) (agent.LLMProvide
 	return f.provider, nil
 }
 
+type autoApproveHandler struct{}
+
+func (autoApproveHandler) RequestApproval(ctx context.Context, req toolexecutor.ApprovalRequest) (toolexecutor.ApprovalResponse, error) {
+	return toolexecutor.ApprovalResponse{
+		Approved: true,
+		Reason:   "auto-approved",
+	}, nil
+}
+
 func reservePort(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -191,6 +200,11 @@ func createIntegrationDaemonWithLogFile(t *testing.T, provider agent.LLMProvider
 	}
 
 	require.NoError(t, d.Start())
+	autoApprovalManager := toolexecutor.NewApprovalManager(autoApproveHandler{})
+	d.toolExecutor.SetApprovalManager(autoApprovalManager)
+	if d.gatewayServer != nil {
+		d.gatewayServer.RegisterApprovalMethods(autoApprovalManager)
+	}
 	t.Cleanup(func() {
 		_ = d.Stop()
 	})
@@ -987,6 +1001,39 @@ func TestIntegrationModelTieringSelectsRoleSpecificModels(t *testing.T) {
 	t.Cleanup(func() {
 		_ = d.Stop()
 	})
+
+	require.NoError(t, d.GetRoutingService().AddRoute(&routing.Route{
+		ID:       "route-critic",
+		Name:     "route-critic",
+		Handler:  "critic",
+		Priority: 90,
+		Enabled:  true,
+		Patterns: []routing.RoutePattern{
+			{Type: routing.PatternTypeRegex, Value: "(?i)review|summarize"},
+		},
+	}))
+
+	require.NoError(t, d.GetRoutingService().AddRoute(&routing.Route{
+		ID:       "route-captain",
+		Name:     "route-captain",
+		Handler:  "captain",
+		Priority: 80,
+		Enabled:  true,
+		Patterns: []routing.RoutePattern{
+			{Type: routing.PatternTypeRegex, Value: "(?i)plan|rollout"},
+		},
+	}))
+
+	require.NoError(t, d.GetRoutingService().AddRoute(&routing.Route{
+		ID:       "route-executor",
+		Name:     "route-executor",
+		Handler:  "executor",
+		Priority: 70,
+		Enabled:  true,
+		Patterns: []routing.RoutePattern{
+			{Type: routing.PatternTypeRegex, Value: "(?i)execute|build"},
+		},
+	}))
 
 	respCritic := rpcCall(t, d, tracing.NewTraceID(), "agent.wait", map[string]interface{}{
 		"prompt":     "review and summarize this quickly",

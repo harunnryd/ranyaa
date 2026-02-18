@@ -51,11 +51,16 @@ func (c *CaptainsChair) Execute(ctx context.Context, req CaptainsChairRequest) (
 	startTime := time.Now()
 	result := CaptainsChairResult{}
 
+	fail := func(err error, stage string) (CaptainsChairResult, error) {
+		result.Success = false
+		result.Error = fmt.Sprintf("%s failed: %v", stage, err)
+		result.TotalDuration = time.Since(startTime).Milliseconds()
+		return result, err
+	}
+
 	// Validate request
 	if err := c.validateRequest(req); err != nil {
-		result.Success = false
-		result.Error = err.Error()
-		return result, err
+		return fail(err, "validation")
 	}
 
 	// Set default timeout
@@ -84,43 +89,28 @@ func (c *CaptainsChair) Execute(ctx context.Context, req CaptainsChairRequest) (
 	}
 
 	// Stage 1: Captain creates plan
-	planResult, err := c.captainCreatePlan(execCtx, req, traceID)
-	result.PlanResult = planResult
+	var err error
+	result.PlanResult, err = c.captainCreatePlan(execCtx, req, traceID)
 	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("plan creation failed: %v", err)
-		result.TotalDuration = time.Since(startTime).Milliseconds()
-		return result, err
+		return fail(err, "plan creation")
 	}
 
 	// Stage 2: Executor executes the plan
-	executorResult, err := c.executorExecute(execCtx, req, planResult, traceID)
-	result.ExecutorResult = executorResult
+	result.ExecutorResult, err = c.executorExecute(execCtx, req, result.PlanResult, traceID)
 	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("execution failed: %v", err)
-		result.TotalDuration = time.Since(startTime).Milliseconds()
-		return result, err
+		return fail(err, "execution")
 	}
 
 	// Stage 3: Critic reviews the execution
-	criticResult, err := c.criticReview(execCtx, req, executorResult, traceID)
-	result.CriticResult = criticResult
+	result.CriticResult, err = c.criticReview(execCtx, req, result.ExecutorResult, traceID)
 	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("review failed: %v", err)
-		result.TotalDuration = time.Since(startTime).Milliseconds()
-		return result, err
+		return fail(err, "review")
 	}
 
 	// Stage 4: Captain synthesizes final result
-	finalResult, err := c.captainSynthesize(execCtx, req, executorResult, criticResult, traceID)
-	result.FinalResult = finalResult
+	result.FinalResult, err = c.captainSynthesize(execCtx, req, result.ExecutorResult, result.CriticResult, traceID)
 	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("synthesis failed: %v", err)
-		result.TotalDuration = time.Since(startTime).Milliseconds()
-		return result, err
+		return fail(err, "synthesis")
 	}
 
 	result.Success = true

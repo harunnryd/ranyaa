@@ -3,9 +3,12 @@ package toolexecutor
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/harun/ranya/pkg/sandbox"
 )
 
 // TestPluginToolApproval_SensitivePermissions tests that plugin tools with sensitive permissions require approval
@@ -132,6 +135,13 @@ func TestPluginToolExecution_WithApproval(t *testing.T) {
 	approvalManager := NewApprovalManager(wrappedHandler)
 	te.SetApprovalManager(approvalManager)
 
+	sandboxCfg := sandbox.DefaultConfig()
+	sandboxManager := NewSandboxManager(sandboxCfg)
+	t.Cleanup(func() {
+		_ = sandboxManager.StopAll(context.Background())
+	})
+	te.SetSandboxManager(sandboxManager)
+
 	// Create mock plugin runtime
 	mockRuntime := &mockPluginToolExecutor{
 		plugins: map[string]PluginToolProvider{
@@ -242,7 +252,7 @@ func TestPluginToolExecution_ApprovalDenied(t *testing.T) {
 		t.Fatal("Tool execution should fail when approval is denied")
 	}
 
-	if result.Error != "plugin tool execution denied by user" {
+	if result.Error != "approval denied by user" {
 		t.Errorf("Expected denial error, got: %s", result.Error)
 	}
 
@@ -338,8 +348,14 @@ func TestPluginToolExecution_NoApprovalManager(t *testing.T) {
 	ctx := context.Background()
 	result := te.Execute(ctx, "write_file", map[string]interface{}{}, nil)
 
-	if !result.Success {
-		t.Fatalf("Tool execution should succeed without approval manager: %s", result.Error)
+	if result.Success {
+		t.Fatal("Tool execution should fail without approval manager")
+	}
+	if result.Error == "" {
+		t.Fatal("Expected error when approval manager is missing")
+	}
+	if !strings.Contains(result.Error, "approval manager is required") {
+		t.Fatalf("Expected approval manager error, got: %s", result.Error)
 	}
 }
 

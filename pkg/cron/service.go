@@ -65,12 +65,23 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		log.Warn().Err(err).Msg("Failed to load jobs, starting with empty registry")
 	}
 
-	// Schedule all enabled jobs
-	s.scheduleAll()
-
 	log.Info().Int("jobCount", len(s.jobs)).Msg("Cron service initialized")
 
 	return s, nil
+}
+
+// Start activates the cron service by scheduling all enabled jobs
+func (s *Service) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.stopped {
+		return fmt.Errorf("cannot start stopped cron service")
+	}
+
+	s.scheduleAllLocked()
+	log.Info().Msg("Cron service started")
+	return nil
 }
 
 // AddJob creates a new cron job
@@ -408,11 +419,7 @@ func (s *Service) Stop() error {
 	return nil
 }
 
-// scheduleAll schedules all enabled jobs
-func (s *Service) scheduleAll() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+func (s *Service) scheduleAllLocked() {
 	for _, job := range s.jobs {
 		if job.Enabled {
 			s.scheduleJobLocked(job)

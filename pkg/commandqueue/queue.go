@@ -73,6 +73,8 @@ type CommandQueue struct {
 	eventMu       sync.RWMutex
 	// Idempotency
 	dedupCache *dedupCache
+	// Global Concurrency Limiter
+	globalSemaphore chan struct{}
 }
 
 // New creates a new CommandQueue with default lanes
@@ -82,11 +84,12 @@ func New() *CommandQueue {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cq := &CommandQueue{
-		lanes:         make(map[string]*laneState),
-		ctx:           ctx,
-		cancel:        cancel,
-		eventHandlers: make(map[string][]EventHandler),
-		dedupCache:    newDedupCache(5 * time.Minute),
+		lanes:           make(map[string]*laneState),
+		ctx:             ctx,
+		cancel:          cancel,
+		eventHandlers:   make(map[string][]EventHandler),
+		dedupCache:      newDedupCache(ctx, 5*time.Minute),
+		globalSemaphore: make(chan struct{}, 100), // Default global limit: 100
 	}
 
 	// Initialize default lanes
@@ -262,6 +265,15 @@ func (cq *CommandQueue) processLane(lane string) {
 
 	// Process tasks while we have capacity and queued tasks
 	for ls.running < ls.concurrency && len(ls.queue) > 0 {
+		// Check for global capacity via semaphore (non-blocking attempt)
+		select {
+		case cq.globalSemaphore <- struct{}{}:
+			// Acquired global slot
+		default:
+			// No global slots available, wait and retry later or skip turn
+			return
+		}
+
 		record := ls.queue[0]
 		ls.queue = ls.queue[1:]
 
@@ -313,10 +325,12 @@ func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 	runCtx, cancel := context.WithCancel(taskCtx)
 	stopCancel := context.AfterFunc(cq.ctx, cancel)
 	defer func() {
+		<-cq.globalSemaphore // Release global slot
 		stopCancel()
 		cancel()
 	}()
 
+	waitDuration := time.Since(record.enqueuedAt)
 	startTime := time.Now()
 
 	// Execute task
@@ -348,6 +362,7 @@ func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 			Str("lane", lane).
 			Str("taskId", record.id).
 			Dur("duration", duration).
+			Dur("wait_duration", waitDuration).
 			Err(err).
 			Msg("Task failed")
 	} else {
@@ -355,10 +370,11 @@ func (cq *CommandQueue) executeTask(lane string, record *taskRecord) {
 			Str("lane", lane).
 			Str("taskId", record.id).
 			Dur("duration", duration).
+			Dur("wait_duration", waitDuration).
 			Msg("Task completed")
 	}
 
-	observability.RecordQueueCompletion(lane, duration, err == nil, queueSize)
+	observability.RecordQueueCompletionWithWait(lane, duration, waitDuration, err == nil, queueSize)
 
 	// Emit completed event (synchronous)
 	cq.emit(Event{
@@ -585,6 +601,9 @@ func (cq *CommandQueue) WaitForActive(timeout time.Duration) bool {
 // Close gracefully shuts down the command queue
 func (cq *CommandQueue) Close() error {
 	cq.cancel()
+	if cq.dedupCache != nil {
+		cq.dedupCache.Stop()
+	}
 	cq.wg.Wait()
 	return nil
 }

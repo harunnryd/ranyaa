@@ -141,6 +141,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/rpc", s.handleRPC)
+	mux.HandleFunc("/events", s.handleSSE)
 	mux.Handle("/metrics", observability.MetricsHandler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -276,6 +277,17 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Create client
 	clientID, _ := gonanoid.New()
+
+	// Set read dead-line for initial authentication
+	_ = conn.SetReadDeadline(time.Now().Add(s.tickInterval * 2))
+
+	// Configure pong handler to reset read deadline
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(s.tickInterval * 2))
+		s.clients.UpdateActivity(clientID)
+		return nil
+	})
+
 	client := &Client{
 		ID:            clientID,
 		Conn:          conn,
@@ -332,6 +344,26 @@ func (s *Server) handleClient(client *Client) {
 		client.Conn.Close()
 		s.clients.Remove(client.ID)
 		s.logger.Info().Str("clientId", client.ID).Msg("Client disconnected")
+	}()
+
+	pingTicker := time.NewTicker(s.tickInterval)
+	defer pingTicker.Stop()
+
+	stopPing := make(chan struct{})
+	defer close(stopPing)
+
+	// Start ping goroutine
+	go func() {
+		for {
+			select {
+			case <-pingTicker.C:
+				if err := client.Conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
+					return
+				}
+			case <-stopPing:
+				return
+			}
+		}
 	}()
 
 	for {
@@ -398,7 +430,7 @@ func (s *Server) handleMessage(client *Client, message []byte) {
 		defer s.inFlightReqs.Done()
 
 		// Create context with client ID
-		ctx := context.WithValue(context.Background(), "clientID", client.ID)
+		ctx := withClientID(context.Background(), client.ID)
 
 		response := s.router.RouteRequest(ctx, req)
 		if err := client.WriteJSON(response); err != nil {
@@ -528,6 +560,74 @@ func (s *Server) RegisterMethod(name string, handler RequestHandler) error {
 // UnregisterMethod unregisters an RPC method handler
 func (s *Server) UnregisterMethod(name string) {
 	s.router.UnregisterMethod(name)
+}
+
+// handleSSE handles Server-Sent Events for streaming runtime events
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
+	// Authenticate
+	secret := r.Header.Get("X-Ranya-Secret")
+	if secret == "" {
+		secret = r.URL.Query().Get("access_token")
+	}
+
+	if s.sharedSecret != "" && secret != s.sharedSecret {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	sessionKey := r.URL.Query().Get("session_key")
+	if sessionKey == "" {
+		http.Error(w, "session_key query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Subscribe to events
+	events, unsubscribe := s.runtimeEventHub.Subscribe(sessionKey, 64)
+	defer unsubscribe()
+
+	s.logger.Info().Str("session_key", sessionKey).Msg("SSE client subscribed")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial connection event
+	_, _ = fmt.Fprintf(w, "event: connected\ndata: {\"session_key\":\"%s\"}\n\n", sessionKey)
+	flusher.Flush()
+
+	// Keep-alive ticker
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			s.logger.Info().Str("session_key", sessionKey).Msg("SSE client disconnected")
+			return
+		case <-ticker.C:
+			// Send heartbeat
+			_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(evt)
+			if err != nil {
+				continue
+			}
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Phase, string(data))
+			flusher.Flush()
+		}
+	}
 }
 
 // GetConnectedClients returns information about all connected clients

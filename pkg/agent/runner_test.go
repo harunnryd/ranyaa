@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/harun/ranya/pkg/commandqueue"
@@ -14,6 +15,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type stubProvider struct {
+	summary string
+	calls   int
+}
+
+func (p *stubProvider) Call(_ context.Context, _ LLMRequest) (*LLMResponse, error) {
+	p.calls++
+	return &LLMResponse{Content: p.summary}, nil
+}
+
+func (p *stubProvider) Provider() string {
+	return "stub"
+}
 
 func setupTestRunner(t *testing.T) (*Runner, string, func()) {
 	// Create temp directory
@@ -301,6 +316,51 @@ func TestBuildTools(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "tool not found")
 	})
+}
+
+func TestCompactAndSummarize_UsesSummaryWithinLimit(t *testing.T) {
+	runner, _, cleanup := setupTestRunner(t)
+	defer cleanup()
+
+	provider := &stubProvider{summary: "Key decisions and context summarized."}
+
+	systemMsg := AgentMessage{
+		Role:    "system",
+		Content: "You are a helpful assistant.",
+	}
+
+	var messages []AgentMessage
+	messages = append(messages, systemMsg)
+	longChunk := strings.Repeat("a", 800)
+	for i := 0; i < 30; i++ {
+		messages = append(messages, AgentMessage{
+			Role:    "user",
+			Content: fmt.Sprintf("message %d %s", i, longChunk),
+		})
+	}
+
+	params := AgentRunParams{
+		Config: AgentConfig{
+			Model:     "stub-model",
+			MaxTokens: 4000,
+		},
+	}
+
+	optimized, err := runner.compactAndSummarize(context.Background(), provider, messages, params)
+	require.NoError(t, err)
+	require.NotEmpty(t, optimized)
+
+	summaryFound := false
+	for _, msg := range optimized {
+		if strings.HasPrefix(msg.Content, "Conversation summary:") {
+			summaryFound = true
+			assert.Contains(t, msg.Content, provider.summary)
+		}
+		assert.NotContains(t, msg.Content, "[Previous conversation summary")
+	}
+	assert.True(t, summaryFound)
+	assert.LessOrEqual(t, EstimateTokens(optimized), 4000)
+	assert.Equal(t, 1, provider.calls)
 }
 
 func TestAbort(t *testing.T) {
