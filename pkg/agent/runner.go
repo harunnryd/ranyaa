@@ -381,9 +381,6 @@ func (r *Runner) buildMessages(ctx context.Context, history []session.SessionEnt
 		Content: params.Prompt,
 	})
 
-	// Compact if needed
-	messages = r.compactIfNeeded(messages, params.Config.MaxTokens)
-
 	return messages, nil
 }
 
@@ -410,53 +407,100 @@ func (r *Runner) getMemoryContext(ctx context.Context, prompt string) (string, e
 	return context, nil
 }
 
-// compactIfNeeded compacts messages if they exceed token limit
-func (r *Runner) compactIfNeeded(messages []AgentMessage, maxTokens int) []AgentMessage {
-	if maxTokens <= 0 {
-		maxTokens = 4096
-	}
+// compactAndSummarize compacts messages using LLM summarization if they exceed token limit
+func (r *Runner) compactAndSummarize(ctx context.Context, provider LLMProvider, messages []AgentMessage, params AgentRunParams) ([]AgentMessage, error) {
+	// Use a reasonable context limit.
+	// params.Config.MaxTokens typically refers to output tokens.
+	// We assume a context window safety limit of 16000 tokens for summarization trigger.
+	contextLimit := 16000
 
 	tokenCount := EstimateTokens(messages)
-	if tokenCount <= maxTokens {
-		return messages
+	if tokenCount <= contextLimit {
+		return messages, nil
 	}
 
 	r.logger.Info().
 		Int("tokenCount", tokenCount).
-		Int("maxTokens", maxTokens).
-		Msg("Compacting context")
+		Int("contextLimit", contextLimit).
+		Msg("Summarizing conversation context")
 
-	// Keep system messages
-	systemMessages := []AgentMessage{}
-	conversationMessages := []AgentMessage{}
+	// Separate System, Recent, and ToSummarize messages
+	var systemMsg *AgentMessage
+	var recentMessages []AgentMessage
+	var toSummarize []AgentMessage
 
-	for _, msg := range messages {
-		if msg.Role == "system" {
-			systemMessages = append(systemMessages, msg)
-		} else {
-			conversationMessages = append(conversationMessages, msg)
+	// Keep last 15 messages (plus the new user prompt which is at the end)
+	keepCount := 15
+
+	// Identify system message (usually first)
+	startIndex := 0
+	if len(messages) > 0 && messages[0].Role == "system" {
+		systemMsg = &messages[0]
+		startIndex = 1
+	}
+
+	if len(messages)-startIndex <= keepCount {
+		return messages, nil
+	}
+
+	cutoff := len(messages) - keepCount
+	toSummarize = messages[startIndex:cutoff]
+	recentMessages = messages[cutoff:]
+
+	// Format messages for summarization
+	var sb strings.Builder
+	sb.WriteString("Summarize the following conversation history, retaining key decisions, facts, and context:\n\n")
+	for _, msg := range toSummarize {
+		sb.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(msg.Role), msg.Content))
+	}
+
+	// Create summarization request
+	summaryCtx, summarySpan := tracing.StartSpan(ctx, "ranya.agent", "agent.summarize")
+	defer summarySpan.End()
+
+	summaryReq := AgentRunParams{
+		Config: AgentConfig{
+			Model:       params.Config.Model,
+			Temperature: 0.3, // Low temp for factual summary
+			MaxTokens:   500,
+		},
+	}
+
+	summaryPrompt := []AgentMessage{
+		{Role: "user", Content: sb.String()},
+	}
+
+	// Call provider (without retrying recursively)
+	resp, err := r.callLLM(summaryCtx, provider, summaryPrompt, nil, "You are a helpful assistant.", summaryReq)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to summarize context, falling back to truncation")
+		// Fallback: just remove the messages
+		newMessages := []AgentMessage{}
+		if systemMsg != nil {
+			newMessages = append(newMessages, *systemMsg)
 		}
+		newMessages = append(newMessages, AgentMessage{
+			Role:    "system",
+			Content: fmt.Sprintf("[History truncated due to validation error. %d messages removed.]", len(toSummarize)),
+		})
+		newMessages = append(newMessages, recentMessages...)
+		return newMessages, nil
 	}
 
-	// Keep last 20 messages
-	recentCount := 20
-	if len(conversationMessages) <= recentCount {
-		return messages
+	// Construct new history
+	newMessages := []AgentMessage{}
+	if systemMsg != nil {
+		newMessages = append(newMessages, *systemMsg)
 	}
 
-	recentMessages := conversationMessages[len(conversationMessages)-recentCount:]
-	olderCount := len(conversationMessages) - recentCount
-
-	// Create summary
-	summary := AgentMessage{
+	newMessages = append(newMessages, AgentMessage{
 		Role:    "system",
-		Content: fmt.Sprintf("[Previous conversation summary: %d messages exchanged]", olderCount),
-	}
+		Content: fmt.Sprintf("[Previous Conversation Summary]: %s", resp.Content),
+	})
+	newMessages = append(newMessages, recentMessages...)
 
-	result := append(systemMessages, summary)
-	result = append(result, recentMessages...)
-
-	return result
+	r.logger.Info().Msg("Context summarization complete")
+	return newMessages, nil
 }
 
 // buildTools converts tool names to tool definitions
@@ -542,6 +586,15 @@ func (r *Runner) executeWithFailover(ctx context.Context, messages []AgentMessag
 				Err(err).
 				Msg("Failed to create provider")
 			continue
+		}
+
+		// Compact/Summarize context if needed using this provider
+		optimizedMessages, err := r.compactAndSummarize(ctx, provider, messages, params)
+		if err != nil {
+			// This likely won't happen as we fallback to truncation, but if it does...
+			logger.Warn().Err(err).Msg("Summarization logic failed")
+		} else {
+			messages = optimizedMessages // Update for this and subsequent retries
 		}
 
 		result, err := r.executeWithProvider(ctx, provider, messages, tools, params)

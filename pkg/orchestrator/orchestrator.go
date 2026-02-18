@@ -13,6 +13,7 @@ import (
 type Orchestrator struct {
 	registry      *Registry
 	agents        map[string]*AgentInstance
+	store         StateStore
 	mu            sync.RWMutex
 	maxConcurrent int
 	logger        Logger
@@ -77,6 +78,54 @@ func WithLogger(logger Logger) Option {
 	}
 }
 
+// WithStore sets the state store for the orchestrator
+func WithStore(store StateStore) Option {
+	return func(o *Orchestrator) {
+		o.store = store
+	}
+}
+
+// Recover loads persisted state and reconciles statuses
+func (o *Orchestrator) Recover() error {
+	if o.store == nil {
+		return nil
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	instances, err := o.store.List()
+	if err != nil {
+		return fmt.Errorf("failed to list stored instances: %w", err)
+	}
+
+	for _, instance := range instances {
+		// If an instance was apparently running but we just started, it must have crashed/been killed.
+		if instance.Status == AgentStatusRunning {
+			instance.Status = AgentStatusFailed
+			if err := o.store.Save(instance); err != nil {
+				if o.logger != nil {
+					o.logger.Error("Failed to update crashed instance status", err, "id", instance.ID)
+				}
+			}
+		}
+
+		// Rehydrate context for viewing purposes (though cancelled)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Immediately cancel since it's not actually running
+		instance.Context = ctx
+		instance.Cancel = cancel
+
+		o.agents[instance.ID] = instance
+	}
+
+	if o.logger != nil {
+		o.logger.Info("Recovered state from store", "count", len(instances))
+	}
+
+	return nil
+}
+
 // RegisterAgent registers an agent configuration
 func (o *Orchestrator) RegisterAgent(config AgentConfig) error {
 	if err := config.Validate(); err != nil {
@@ -117,6 +166,13 @@ func (o *Orchestrator) CreateInstance(agentID string) (*AgentInstance, error) {
 
 	o.mu.Lock()
 	o.agents[instanceID] = instance
+
+	if o.store != nil {
+		if err := o.store.Save(instance); err != nil {
+			o.mu.Unlock()
+			return nil, fmt.Errorf("failed to persist instance: %w", err)
+		}
+	}
 	o.mu.Unlock()
 
 	if o.logger != nil {
@@ -153,6 +209,12 @@ func (o *Orchestrator) UpdateInstanceStatus(instanceID string, status AgentStatu
 	}
 
 	instance.Status = status
+
+	if o.store != nil {
+		if err := o.store.Save(instance); err != nil {
+			return fmt.Errorf("failed to persist instance status: %w", err)
+		}
+	}
 
 	if o.logger != nil {
 		o.logger.Info("Agent instance status updated",
@@ -211,6 +273,13 @@ func (o *Orchestrator) Cleanup() {
 
 	for id, instance := range o.agents {
 		if instance.Status == AgentStatusStopped || instance.Status == AgentStatusFailed {
+			if o.store != nil {
+				if err := o.store.Delete(id); err != nil {
+					if o.logger != nil {
+						o.logger.Error("Failed to delete instance from store", err, "id", id)
+					}
+				}
+			}
 			delete(o.agents, id)
 			if o.logger != nil {
 				o.logger.Debug("Cleaned up agent instance", "instance_id", id)
@@ -231,6 +300,9 @@ func (o *Orchestrator) Shutdown(ctx context.Context) error {
 	for id, instance := range o.agents {
 		instance.Cancel()
 		instance.Status = AgentStatusStopped
+		if o.store != nil {
+			_ = o.store.Save(instance)
+		}
 		if o.logger != nil {
 			o.logger.Debug("Stopped agent instance", "instance_id", id)
 		}

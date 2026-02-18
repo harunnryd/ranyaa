@@ -105,13 +105,11 @@ func (r *RPCRouter) RouteRequest(ctx context.Context, req *RPCRequest) *RPCRespo
 	// Idempotency Loop
 	if cacheKey != "" {
 		for {
-			// 1. Check Cache
 			if cached, ok := r.getCachedResponse(cacheKey); ok {
 				cached.ID = req.ID // Return cached response with current ID
 				return &cached
 			}
 
-			// 2. Check/Set In-Flight
 			r.mu.Lock()
 			if ch, ok := r.inFlight[cacheKey]; ok {
 				// Another request is processing this key

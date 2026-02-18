@@ -145,7 +145,6 @@ func (s *Server) handleAgentWait(ctx context.Context, params map[string]interfac
 
 // handleChatSend handles chat.send RPC method (send message + run agent)
 func (s *Server) handleChatSend(ctx context.Context, params map[string]interface{}) (interface{}, error) {
-	// 1. Send session message
 	sessionKey, ok := params["sessionKey"].(string)
 	if !ok {
 		return nil, fmt.Errorf("sessionKey parameter is required and must be a string")
@@ -192,7 +191,6 @@ func (s *Server) handleChatSend(ctx context.Context, params map[string]interface
 		})
 	}
 
-	// 2. Run Agent
 	return s.handleAgentWait(ctx, params)
 }
 

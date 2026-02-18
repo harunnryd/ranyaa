@@ -280,53 +280,6 @@ func TestBuildMessages(t *testing.T) {
 	})
 }
 
-func TestCompactIfNeeded(t *testing.T) {
-	runner, _, cleanup := setupTestRunner(t)
-	defer cleanup()
-
-	t.Run("should not compact if under limit", func(t *testing.T) {
-		messages := []AgentMessage{
-			{Role: "system", Content: "System"},
-			{Role: "user", Content: "Hello"},
-		}
-
-		result := runner.compactIfNeeded(messages, 1000)
-		assert.Len(t, result, 2)
-	})
-
-	t.Run("should compact if over limit", func(t *testing.T) {
-		messages := []AgentMessage{
-			{Role: "system", Content: "System"},
-		}
-
-		// Add many messages to exceed limit
-		for i := 0; i < 30; i++ {
-			messages = append(messages, AgentMessage{
-				Role:    "user",
-				Content: "Message with some content to increase token count",
-			})
-		}
-
-		result := runner.compactIfNeeded(messages, 100)
-
-		// Should have system + summary + recent messages
-		assert.Less(t, len(result), len(messages))
-
-		// Should preserve system message
-		assert.Equal(t, "system", result[0].Role)
-
-		// Should have summary
-		foundSummary := false
-		for _, msg := range result {
-			if msg.Role == "system" && len(msg.Content) > len("System") {
-				foundSummary = true
-				break
-			}
-		}
-		assert.True(t, foundSummary)
-	})
-}
-
 func TestBuildTools(t *testing.T) {
 	runner, _, cleanup := setupTestRunner(t)
 	defer cleanup()

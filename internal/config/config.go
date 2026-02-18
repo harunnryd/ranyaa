@@ -43,6 +43,16 @@ type Config struct {
 
 	// AI configuration
 	AI AIConfig `json:"ai" mapstructure:"ai"`
+
+	// Moderation configuration
+	Moderation ModerationConfig `json:"moderation" mapstructure:"moderation"`
+}
+
+// ModerationConfig holds content moderation settings
+type ModerationConfig struct {
+	Enabled         bool     `json:"enabled" mapstructure:"enabled"`
+	BlockedKeywords []string `json:"blocked_keywords" mapstructure:"blocked_keywords"`
+	BlockedPatterns []string `json:"blocked_patterns" mapstructure:"blocked_patterns"`
 }
 
 // TelegramConfig holds Telegram bot configuration
@@ -266,6 +276,11 @@ func DefaultConfig() *Config {
 				MaxConcurrentSubAgents: 5,
 				AllowedSubAgents:       []string{"*"},
 			},
+		},
+		Moderation: ModerationConfig{
+			Enabled:         false,
+			BlockedKeywords: []string{},
+			BlockedPatterns: []string{},
 		},
 	}
 }

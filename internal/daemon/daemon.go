@@ -24,6 +24,7 @@ import (
 	"github.com/harun/ranya/pkg/gateway"
 	"github.com/harun/ranya/pkg/hooks"
 	"github.com/harun/ranya/pkg/memory"
+	"github.com/harun/ranya/pkg/moderation"
 	"github.com/harun/ranya/pkg/node"
 	"github.com/harun/ranya/pkg/orchestrator"
 	"github.com/harun/ranya/pkg/planner"
@@ -35,6 +36,7 @@ import (
 	"github.com/harun/ranya/pkg/toolexecutor"
 	"github.com/harun/ranya/pkg/webhook"
 	"github.com/harun/ranya/pkg/workspace"
+	"github.com/rs/zerolog"
 )
 
 // Daemon represents the Ranya daemon service
@@ -55,6 +57,7 @@ type Daemon struct {
 	planner        *planner.Planner
 	subagentCoord  *subagent.Coordinator
 	hookManager    *hooks.Manager
+	contentFilter  *moderation.ContentFilter
 
 	// Services
 	gatewayServer   *gateway.Server
@@ -153,6 +156,13 @@ func (d *Daemon) initializeCoreModules() error {
 	d.bindQueueHooks()
 	d.logger.Info().Msg("Hook manager initialized")
 
+	contentFilter, err := moderation.New(d.config.Moderation)
+	if err != nil {
+		return fmt.Errorf("failed to create content filter: %w", err)
+	}
+	d.contentFilter = contentFilter
+	d.logger.Info().Bool("enabled", d.config.Moderation.Enabled).Msg("Content moderation initialized")
+
 	sessionMgr, err := session.New(d.config.DataDir + "/sessions")
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
@@ -171,7 +181,6 @@ func (d *Daemon) initializeCoreModules() error {
 	d.memoryMgr = memoryMgr
 	d.logger.Info().Msg("Memory manager initialized")
 
-	// 4. Tool Executor
 	d.toolExecutor = toolexecutor.New()
 	d.toolExecutor.SetRetryConfig(toolexecutor.RetryConfig{
 		Enabled:        d.config.Tools.Retry.Enabled,
@@ -197,13 +206,11 @@ func (d *Daemon) initializeCoreModules() error {
 	d.toolExecutor.SetSandboxManager(toolexecutor.NewSandboxManager(sandboxCfg))
 	d.logger.Info().Msg("Tool executor initialized")
 
-	// 5. Register memory tools with tool executor
 	if err := d.memoryMgr.RegisterTools(d.toolExecutor); err != nil {
 		return fmt.Errorf("failed to register memory tools: %w", err)
 	}
 	d.logger.Info().Msg("Memory tools registered")
 
-	// 6. Workspace Manager (if workspace path configured)
 	if d.config.WorkspacePath != "" {
 		workspaceMgr, err := workspace.NewWorkspaceManager(workspace.WorkspaceConfig{
 			WorkspacePath: d.config.WorkspacePath,
@@ -215,7 +222,6 @@ func (d *Daemon) initializeCoreModules() error {
 		d.logger.Info().Str("path", d.config.WorkspacePath).Msg("Workspace manager initialized")
 	}
 
-	// 7. Agent Runner (requires all above dependencies)
 	agentRunner, err := newAgentRunner(agent.Config{
 		SessionManager: d.sessionMgr,
 		ToolExecutor:   d.toolExecutor,
@@ -230,15 +236,12 @@ func (d *Daemon) initializeCoreModules() error {
 	d.agentRunner = agentRunner
 	d.logger.Info().Msg("Agent runner initialized")
 
-	// 8. Session Archiver
 	d.archiver = session.NewArchiver(d.sessionMgr, 30*time.Minute)
 	d.logger.Info().Msg("Session archiver initialized")
 
-	// 9. Session Cleanup
 	d.cleanup = session.NewCleanup(d.sessionMgr, 7*24*time.Hour)
 	d.logger.Info().Msg("Session cleanup initialized")
 
-	// 10. Browser Context
 	browserConfigPath := d.config.DataDir + "/browser.json"
 	browserBaseDir := d.config.DataDir + "/browser"
 	browserContext, err := browser.NewBrowserServerContext(browserConfigPath, browserBaseDir)
@@ -257,7 +260,6 @@ func (d *Daemon) initializeCoreModules() error {
 	}
 	d.logger.Info().Msg("Browser tools registered")
 
-	// 11. Plugin Runtime
 	pluginRuntime := plugin.NewPluginRuntime(d.logger.GetZerolog(), plugin.PluginRuntimeConfig{
 		BuiltinDir:    d.config.DataDir + "/plugins/builtin",
 		WorkspaceDir:  d.config.WorkspacePath + "/.ranya/plugins",
@@ -281,20 +283,29 @@ func (d *Daemon) initializeCoreModules() error {
 		d.logger.Warn().Err(err).Msg("Failed to register plugin tools")
 	}
 
-	// 12. Orchestrator
+	orchStore, err := orchestrator.NewFileStore(d.config.DataDir + "/orchestrator")
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator store: %w", err)
+	}
+
 	d.orchestrator = orchestrator.New(
-		orchestrator.WithMaxConcurrent(10),
+		orchestrator.WithStore(orchStore),
+		orchestrator.WithLogger(&orchLoggerAdapter{logger: d.logger.GetZerolog()}),
+		orchestrator.WithMaxConcurrent(50),
 	)
+
+	if err := d.orchestrator.Recover(); err != nil {
+		d.logger.Warn().Err(err).Msg("Failed to recover orchestrator state")
+	}
+
 	if err := d.registerOrchestratorAgents(); err != nil {
 		return fmt.Errorf("failed to register orchestrator agents: %w", err)
 	}
 	d.logger.Info().Msg("Orchestrator initialized")
 
-	// 13. Planner
 	d.planner = planner.NewPlanner()
 	d.logger.Info().Msg("Planner initialized")
 
-	// 14. Subagent Coordinator
 	subagentCoord, err := subagent.NewCoordinator(subagent.Config{
 		RegistryPath: d.config.DataDir + "/subagents.json",
 		AutoSave:     true,
@@ -371,6 +382,19 @@ func (d *Daemon) initializeServices() error {
 			d.runtimeEvents.Publish(sessionKey, evt)
 		}
 	}))
+
+	// Configure Tool Approval Workflow (P0-1)
+	approvalForwarder := gateway.NewApprovalForwarder(d.gatewayServer)
+	// Note: AllowlistManager is nil for now (stateless persistence)
+	approvalHandler := toolexecutor.NewChatApprovalHandler(approvalForwarder, nil)
+	approvalManager := toolexecutor.NewApprovalManager(approvalHandler)
+
+	// Set approval manager on tool executor
+	d.toolExecutor.SetApprovalManager(approvalManager)
+
+	// Register approval RPC methods on gateway
+	d.gatewayServer.RegisterApprovalMethods(approvalManager)
+	d.logger.Info().Msg("User-in-the-loop tool approval workflow configured")
 
 	nodeManager := node.NewNodeManager(node.NodeManagerConfig{
 		NodeConfig: node.NodeConfig{
@@ -1043,7 +1067,34 @@ func (d *Daemon) clearRuntimeSession(sessionKey string) error {
 	return d.sessionMgr.ClearSessionWithContext(context.Background(), sessionKey)
 }
 
-// GetSubagentCoordinator returns the subagent coordinator
 func (d *Daemon) GetSubagentCoordinator() *subagent.Coordinator {
 	return d.subagentCoord
+}
+
+// orchLoggerAdapter adapts zerolog.Logger to orchestrator.Logger
+type orchLoggerAdapter struct {
+	logger zerolog.Logger
+}
+
+func (l *orchLoggerAdapter) Info(msg string, fields ...interface{}) {
+	l.log(l.logger.Info(), msg, fields...)
+}
+
+func (l *orchLoggerAdapter) Debug(msg string, fields ...interface{}) {
+	l.log(l.logger.Debug(), msg, fields...)
+}
+
+func (l *orchLoggerAdapter) Error(msg string, err error, fields ...interface{}) {
+	l.log(l.logger.Error().Err(err), msg, fields...)
+}
+
+func (l *orchLoggerAdapter) log(ev *zerolog.Event, msg string, fields ...interface{}) {
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			if key, ok := fields[i].(string); ok {
+				ev.Interface(key, fields[i+1])
+			}
+		}
+	}
+	ev.Msg(msg)
 }
