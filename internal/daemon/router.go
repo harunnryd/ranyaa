@@ -82,6 +82,10 @@ func (r *Router) processMessage(ctx context.Context, msg Message) (interface{}, 
 		Str("agent_id", agentID).
 		Msg("Processing message")
 
+	if err := r.daemon.maybeResetSession(ctx, msg.SessionKey); err != nil {
+		logger.Warn().Err(err).Msg("Failed to apply session reset policy")
+	}
+
 	// Extract or generate RequestID for idempotency
 	requestID := ""
 	if msg.Metadata != nil {

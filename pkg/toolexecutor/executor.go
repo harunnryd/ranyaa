@@ -273,6 +273,13 @@ func (te *ToolExecutor) SetSandboxManager(manager *SandboxManager) {
 	te.sandboxManager = manager
 }
 
+// GetSandboxManager returns the configured sandbox manager.
+func (te *ToolExecutor) GetSandboxManager() *SandboxManager {
+	te.mu.RLock()
+	defer te.mu.RUnlock()
+	return te.sandboxManager
+}
+
 // SetApprovalManager sets the approval manager for the tool executor
 func (te *ToolExecutor) SetApprovalManager(manager *ApprovalManager) {
 	te.mu.Lock()
@@ -379,6 +386,24 @@ func (te *ToolExecutor) GetToolCount() int {
 	defer te.mu.RUnlock()
 
 	return len(te.tools)
+}
+
+// ListAllowedTools returns tool names filtered by the supplied policy.
+func (te *ToolExecutor) ListAllowedTools(policy *ToolPolicy, agentID string) []string {
+	toolNames := te.ListTools()
+	if len(toolNames) == 0 {
+		return nil
+	}
+	if policy == nil {
+		return toolNames
+	}
+	allowed := make([]string, 0, len(toolNames))
+	for _, name := range toolNames {
+		if res := te.policyEvaluator.Evaluate(name, policy, agentID); res.Allowed {
+			allowed = append(allowed, name)
+		}
+	}
+	return allowed
 }
 
 // Execute executes a tool with the given parameters
@@ -588,6 +613,11 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 	// Enforce sandbox requirement for tools that need it
 	if tool.SandboxRequired || isRiskyCategory(category) {
+		if execCtx != nil && execCtx.SandboxPolicy != nil {
+			if mode, ok := execCtx.SandboxPolicy["mode"].(string); ok && strings.TrimSpace(mode) == "off" && !tool.SandboxRequired {
+				goto skipSandbox
+			}
+		}
 		if sandboxManager == nil {
 			duration := time.Since(startTime)
 			observability.RecordToolExecution(toolName, duration, false)
@@ -626,6 +656,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 			}
 		}
 	}
+skipSandbox:
 
 	logger.Info().
 		Str("event", "tool:execute").
@@ -635,13 +666,14 @@ func (te *ToolExecutor) Execute(ctx context.Context, toolName string, params map
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	handlerCtx := ContextWithExecContext(timeoutCtx, execCtx)
 
 	// Execute tool
 	resultChan := make(chan interface{}, 1)
 	errChan := make(chan error, 1)
 
 	go func() {
-		result, err := tool.Handler(timeoutCtx, params)
+		result, err := tool.Handler(handlerCtx, params)
 		if err != nil {
 			errChan <- err
 		} else {

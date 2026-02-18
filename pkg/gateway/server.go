@@ -24,6 +24,7 @@ import (
 // Server is the main Gateway Server
 type Server struct {
 	port            int
+	host            string
 	sharedSecret    string
 	tickInterval    time.Duration
 	server          *http.Server
@@ -49,6 +50,7 @@ type Server struct {
 // Config holds server configuration
 type Config struct {
 	Port            int
+	Host            string
 	SharedSecret    string
 	TickInterval    time.Duration
 	CommandQueue    *commandqueue.CommandQueue
@@ -85,6 +87,9 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Port <= 0 {
 		return nil, fmt.Errorf("invalid port: %d", cfg.Port)
 	}
+	if cfg.Host == "" {
+		cfg.Host = "0.0.0.0"
+	}
 	if cfg.SharedSecret == "" {
 		return nil, fmt.Errorf("shared secret is required")
 	}
@@ -111,6 +116,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	s := &Server{
 		port:            cfg.Port,
+		host:            cfg.Host,
 		sharedSecret:    cfg.SharedSecret,
 		tickInterval:    cfg.TickInterval,
 		clients:         clients,
@@ -152,7 +158,7 @@ func (s *Server) Start() error {
 	})
 
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.port),
+		Addr:    fmt.Sprintf("%s:%d", s.host, s.port),
 		Handler: mux,
 	}
 

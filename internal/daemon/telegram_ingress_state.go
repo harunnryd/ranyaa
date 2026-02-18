@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"strconv"
 	"sync"
 	"time"
 )
@@ -100,45 +99,4 @@ func (c *messageDedupeCache) cleanupExpired() {
 		}
 	}
 	c.mu.Unlock()
-}
-
-type telegramPairingStore struct {
-	mu        sync.RWMutex
-	allowlist map[string]bool
-	paired    map[string]bool
-}
-
-func newTelegramPairingStore(allowlist []int64) *telegramPairingStore {
-	store := &telegramPairingStore{
-		allowlist: make(map[string]bool, len(allowlist)),
-		paired:    make(map[string]bool),
-	}
-	for _, chatID := range allowlist {
-		store.allowlist[strconv.FormatInt(chatID, 10)] = true
-	}
-	return store
-}
-
-func (s *telegramPairingStore) IsAllowlisted(peerID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.allowlist[peerID]
-}
-
-func (s *telegramPairingStore) IsPaired(peerID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.paired[peerID]
-}
-
-func (s *telegramPairingStore) IsAllowed(peerID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.allowlist[peerID] || s.paired[peerID]
-}
-
-func (s *telegramPairingStore) Pair(peerID string) {
-	s.mu.Lock()
-	s.paired[peerID] = true
-	s.mu.Unlock()
 }

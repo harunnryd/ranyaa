@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/harun/ranya/internal/tracing"
 	"github.com/harun/ranya/pkg/agent"
 	"github.com/harun/ranya/pkg/channels"
+	"github.com/harun/ranya/pkg/pairing"
 	"github.com/rs/zerolog"
 )
 
@@ -63,7 +65,7 @@ type telegramIngressChannel struct {
 	commands        *telegram.Commands
 	clearSession    func(sessionKey string) error
 	dedupe          *messageDedupeCache
-	pairing         *telegramPairingStore
+	pairing         *pairing.Manager
 	dmPolicy        string
 	streamMode      string
 	streamMinChars  int
@@ -72,6 +74,8 @@ type telegramIngressChannel struct {
 	pairingSuccess  string
 	resetSuccess    string
 	subscribeEvents runtimeEventSubscriber
+	sessionMainKey  string
+	dmScope         string
 }
 
 type runtimeEventSubscriber func(sessionKey string) (<-chan agent.RuntimeEvent, func())
@@ -80,6 +84,8 @@ func newTelegramIngressChannel(
 	bot *telegram.Bot,
 	commands *telegram.Commands,
 	cfg config.TelegramConfig,
+	sessionCfg config.SessionConfig,
+	pairingManager *pairing.Manager,
 	subscribe runtimeEventSubscriber,
 	clearSession func(sessionKey string) error,
 	logger zerolog.Logger,
@@ -118,13 +124,17 @@ func newTelegramIngressChannel(
 		pairingSuccess = "✅ Device paired. You can now send messages."
 	}
 
+	if pairingManager == nil {
+		pairingManager = newInMemoryPairingManager(cfg.Allowlist)
+	}
+
 	return &telegramIngressChannel{
 		bot:             bot,
 		logger:          logger.With().Str("component", "channels.telegram").Logger(),
 		commands:        commands,
 		clearSession:    clearSession,
 		dedupe:          newMessageDedupeCache(dedupeTTL),
-		pairing:         newTelegramPairingStore(cfg.Allowlist),
+		pairing:         pairingManager,
 		dmPolicy:        policy,
 		streamMode:      streamMode,
 		streamMinChars:  minChars,
@@ -133,6 +143,8 @@ func newTelegramIngressChannel(
 		pairingSuccess:  pairingSuccess,
 		resetSuccess:    "✨ New conversation started.",
 		subscribeEvents: subscribe,
+		sessionMainKey:  strings.TrimSpace(sessionCfg.MainKey),
+		dmScope:         strings.ToLower(strings.TrimSpace(sessionCfg.DmScope)),
 	}
 }
 
@@ -170,6 +182,13 @@ func (c *telegramIngressChannel) Start(ctx context.Context, dispatch channels.Di
 			return c.handlePairMessage(handler, msgCtx)
 		}
 		if !c.isAllowedPeer(peerID) {
+			if c.dmPolicy == "pairing" {
+				prompt, err := c.pairingPromptForPeer(peerID)
+				if err != nil {
+					return handler.SendResponse(msgCtx, fmt.Sprintf("Failed to create pairing request: %v", err))
+				}
+				return handler.SendResponse(msgCtx, prompt)
+			}
 			denied := c.deniedAccessMessage()
 			if denied == "" {
 				return nil
@@ -191,7 +210,7 @@ func (c *telegramIngressChannel) Start(ctx context.Context, dispatch channels.Di
 			c.dedupe.Mark(msgKey)
 		}
 
-		sessionKey := fmt.Sprintf("telegram:%d", msgCtx.ChatID)
+		sessionKey := c.resolveSessionKey(msgCtx)
 		stream := c.startStream(msgCtx.ChatID, sessionKey)
 
 		// Generate request ID for idempotency
@@ -261,19 +280,19 @@ func (c *telegramIngressChannel) handlePairCommand(cmdCtx telegram.CommandContex
 		return c.commands.SendResponse(cmdCtx, "⚠️ Telegram access is disabled.")
 	case "allowlist":
 		peerID := strconv.FormatInt(cmdCtx.ChatID, 10)
-		if c.pairing.IsAllowlisted(peerID) {
+		if c.isAllowlistedPeer(peerID) {
 			return c.commands.SendResponse(cmdCtx, "✅ This chat is already allowlisted.")
 		}
-		return c.commands.SendResponse(cmdCtx, c.pairingPrompt)
+		return c.commands.SendResponse(cmdCtx, "⚠️ This chat is not allowlisted.")
 	case "open":
 		return c.commands.SendResponse(cmdCtx, "✅ Pairing is not required.")
 	default:
 		peerID := strconv.FormatInt(cmdCtx.ChatID, 10)
-		if c.pairing.IsAllowed(peerID) {
-			return c.commands.SendResponse(cmdCtx, "✅ This chat is already paired.")
+		prompt, err := c.pairingPromptForPeer(peerID)
+		if err != nil {
+			return c.commands.SendResponse(cmdCtx, fmt.Sprintf("Failed to create pairing request: %v", err))
 		}
-		c.pairing.Pair(peerID)
-		return c.commands.SendResponse(cmdCtx, c.pairingSuccess)
+		return c.commands.SendResponse(cmdCtx, prompt)
 	}
 }
 
@@ -287,7 +306,7 @@ func (c *telegramIngressChannel) handleResetCommand(cmdCtx telegram.CommandConte
 		return c.commands.SendResponse(cmdCtx, denied)
 	}
 
-	sessionKey := fmt.Sprintf("telegram:%d", cmdCtx.ChatID)
+	sessionKey := c.resolveCommandSessionKey(cmdCtx.ChatID, cmdCtx.UserID, false)
 	if err := c.resetSession(sessionKey); err != nil {
 		return c.commands.SendResponse(cmdCtx, fmt.Sprintf("Failed to reset conversation: %v", err))
 	}
@@ -300,24 +319,24 @@ func (c *telegramIngressChannel) handlePairMessage(handler *telegram.Handler, ms
 		return handler.SendResponse(msgCtx, "⚠️ Telegram access is disabled.")
 	case "allowlist":
 		peerID := strconv.FormatInt(msgCtx.ChatID, 10)
-		if c.pairing.IsAllowlisted(peerID) {
+		if c.isAllowlistedPeer(peerID) {
 			return handler.SendResponse(msgCtx, "✅ This chat is already allowlisted.")
 		}
-		return handler.SendResponse(msgCtx, c.pairingPrompt)
+		return handler.SendResponse(msgCtx, "⚠️ This chat is not allowlisted.")
 	case "open":
 		return handler.SendResponse(msgCtx, "✅ Pairing is not required.")
 	default:
 		peerID := strconv.FormatInt(msgCtx.ChatID, 10)
-		if c.pairing.IsAllowed(peerID) {
-			return handler.SendResponse(msgCtx, "✅ This chat is already paired.")
+		prompt, err := c.pairingPromptForPeer(peerID)
+		if err != nil {
+			return handler.SendResponse(msgCtx, fmt.Sprintf("Failed to create pairing request: %v", err))
 		}
-		c.pairing.Pair(peerID)
-		return handler.SendResponse(msgCtx, c.pairingSuccess)
+		return handler.SendResponse(msgCtx, prompt)
 	}
 }
 
 func (c *telegramIngressChannel) handleResetMessage(handler *telegram.Handler, msgCtx telegram.MessageContext) error {
-	sessionKey := fmt.Sprintf("telegram:%d", msgCtx.ChatID)
+	sessionKey := c.resolveCommandSessionKey(msgCtx.ChatID, msgCtx.UserID, msgCtx.IsGroup)
 	if err := c.resetSession(sessionKey); err != nil {
 		return handler.SendResponse(msgCtx, fmt.Sprintf("Failed to reset conversation: %v", err))
 	}
@@ -340,7 +359,7 @@ func (c *telegramIngressChannel) deniedAccessMessage() string {
 	case "open":
 		return ""
 	default:
-		return c.pairingPrompt
+		return ""
 	}
 }
 
@@ -361,17 +380,97 @@ func isResetTrigger(token string) bool {
 	}
 }
 
+func (c *telegramIngressChannel) resolveSessionKey(msgCtx telegram.MessageContext) string {
+	return c.resolveCommandSessionKey(msgCtx.ChatID, msgCtx.UserID, msgCtx.IsGroup)
+}
+
+func (c *telegramIngressChannel) resolveCommandSessionKey(chatID int64, userID int64, isGroup bool) string {
+	if isGroup {
+		return fmt.Sprintf("telegram:group:%d", chatID)
+	}
+
+	mainKey := c.sessionMainKey
+	if mainKey == "" {
+		mainKey = "main"
+	}
+	switch c.dmScope {
+	case "per-peer":
+		return fmt.Sprintf("telegram:dm:%d", userID)
+	case "per-channel-peer":
+		return fmt.Sprintf("telegram:%d:dm:%d", chatID, userID)
+	case "main":
+		fallthrough
+	default:
+		return mainKey
+	}
+}
+
 func (c *telegramIngressChannel) isAllowedPeer(peerID string) bool {
 	switch c.dmPolicy {
 	case "open":
 		return true
 	case "allowlist":
-		return c.pairing.IsAllowlisted(peerID)
+		return c.isAllowlistedPeer(peerID)
 	case "disabled":
 		return false
 	default:
+		if c.pairing == nil {
+			return false
+		}
 		return c.pairing.IsAllowed(peerID)
 	}
+}
+
+func (c *telegramIngressChannel) isAllowlistedPeer(peerID string) bool {
+	if c.pairing == nil {
+		return false
+	}
+	return c.pairing.IsAllowed(peerID)
+}
+
+func (c *telegramIngressChannel) pairingPromptForPeer(peerID string) (string, error) {
+	if c.pairing == nil {
+		return c.pairingPrompt, nil
+	}
+
+	req, _, err := c.pairing.EnsurePending(peerID)
+	if err != nil {
+		if errors.Is(err, pairing.ErrPendingLimitReached) {
+			return "⚠️ Pairing queue is full. Try again later.", nil
+		}
+		if errors.Is(err, pairing.ErrAlreadyAllowlisted) {
+			return "✅ This chat is already paired.", nil
+		}
+		return "", err
+	}
+
+	return formatPairingPrompt(c.pairingPrompt, req.Code), nil
+}
+
+func formatPairingPrompt(base string, code string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return fmt.Sprintf("Pairing code: %s", code)
+	}
+	if strings.Contains(base, "{{code}}") {
+		return strings.ReplaceAll(base, "{{code}}", code)
+	}
+	return fmt.Sprintf("%s\nPairing code: %s", base, code)
+}
+
+func newInMemoryPairingManager(allowlist []int64) *pairing.Manager {
+	bootstrap := make([]string, 0, len(allowlist))
+	for _, id := range allowlist {
+		bootstrap = append(bootstrap, strconv.FormatInt(id, 10))
+	}
+	manager, err := pairing.NewManager(pairing.ManagerOptions{
+		Channel:            "telegram",
+		BootstrapAllowlist: bootstrap,
+	})
+	if err != nil {
+		return nil
+	}
+	return manager
 }
 
 type telegramRuntimeStream struct {

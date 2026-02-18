@@ -102,12 +102,26 @@ func (d *Daemon) executeRuntimeFlow(ctx context.Context, req RuntimeRequest) (ag
 	}
 	ctx = tracing.WithAgentID(ctx, agentCfg.ID)
 
+	if strings.TrimSpace(req.CWD) == "" {
+		if strings.TrimSpace(agentCfg.Workspace) != "" {
+			req.CWD = agentCfg.Workspace
+		} else if strings.TrimSpace(d.config.WorkspacePath) != "" {
+			req.CWD = d.config.WorkspacePath
+		}
+	}
+
 	if err := d.triggerAgentBootstrapHook(ctx, req, agentCfg.ID); err != nil {
 		logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog())
 		logger.Warn().Err(err).Msg("agent:bootstrap hooks failed")
 	}
 
 	runCfg := mergeRunConfig(agentCfg, req.RunConfig)
+	if runCfg.Tools == nil && d.toolExecutor != nil {
+		runCfg.Tools = d.toolExecutor.ListAllowedTools(&toolexecutor.ToolPolicy{
+			Allow: append([]string{}, agentCfg.Tools.Allow...),
+			Deny:  append([]string{}, agentCfg.Tools.Deny...),
+		}, agentCfg.ID)
+	}
 	plan, err := d.generateRuntimePlan(req, runCfg)
 	if err != nil {
 		return agent.AgentResult{}, nil, err
@@ -427,10 +441,6 @@ func (d *Daemon) generateRuntimePlan(req RuntimeRequest, runCfg agent.AgentConfi
 }
 
 func shouldUseMultiStepPlan(prompt string, tools []string) bool {
-	if len(tools) > 0 {
-		return true
-	}
-
 	normalized := strings.ToLower(prompt)
 	markers := []string{" then ", " and then ", " after that ", " finally ", "\n1.", "\n- "}
 	for _, marker := range markers {

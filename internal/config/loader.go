@@ -116,6 +116,7 @@ func (l *Loader) Save(cfg *Config) error {
 	v.Set("gateway", cfg.Gateway)
 	v.Set("webhook", cfg.Webhook)
 	v.Set("ai", cfg.AI)
+	v.Set("session", cfg.Session)
 
 	// Write config file
 	if err := v.WriteConfig(); err != nil {

@@ -163,6 +163,8 @@ func TestTelegramIngressMessageDeduplicationIntegration(t *testing.T) {
 			DedupeTTLSeconds: 300,
 			StreamMode:       "off",
 		},
+		config.SessionConfig{},
+		nil,
 		nil,
 		nil,
 		zerolog.Nop(),
@@ -224,6 +226,8 @@ func TestTelegramIngressStreamingIntegrationEmitsMultipleUpdatesBeforeFinal(t *t
 			StreamMinInterval: 10,
 			StreamMinChars:    8,
 		},
+		config.SessionConfig{},
+		nil,
 		subscribe,
 		nil,
 		zerolog.Nop(),
@@ -322,6 +326,8 @@ func TestTelegramIngressBlockStreamingIntegrationEmitsBlockUpdatesBeforeFinal(t 
 			StreamMinInterval: 10,
 			StreamMinChars:    5,
 		},
+		config.SessionConfig{},
+		nil,
 		subscribe,
 		nil,
 		zerolog.Nop(),
@@ -401,6 +407,8 @@ func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 			PairingPrompt:      "Pair first with /pair",
 			PairingSuccessText: "Paired successfully",
 		},
+		config.SessionConfig{},
+		nil,
 		nil,
 		nil,
 		zerolog.Nop(),
@@ -445,6 +453,11 @@ func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 	}
 	require.NoError(t, commands.HandleCommand(pairCommand))
 
+	pending := channel.pairing.ListPending()
+	require.NotEmpty(t, pending, "expected pending pairing request")
+	_, err = channel.pairing.Approve(pending[0].Code)
+	require.NoError(t, err, "approval should succeed")
+
 	allowedMessage := tgbotapi.Update{
 		Message: &tgbotapi.Message{
 			MessageID: 103,
@@ -465,7 +478,7 @@ func TestTelegramIngressPairingWorkflowIntegration(t *testing.T) {
 		}
 	}
 	assert.Contains(t, texts, "Pair first with /pair")
-	assert.Contains(t, texts, "Paired successfully")
+	assert.Contains(t, texts, "Pairing code:")
 	assert.Contains(t, texts, "processed")
 }
 
@@ -489,6 +502,8 @@ func TestTelegramIngressResetWorkflowIntegration(t *testing.T) {
 			DedupeTTLSeconds: 300,
 			StreamMode:       "off",
 		},
+		config.SessionConfig{},
+		nil,
 		nil,
 		clearSession,
 		zerolog.Nop(),

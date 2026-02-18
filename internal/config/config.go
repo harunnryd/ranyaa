@@ -46,6 +46,23 @@ type Config struct {
 
 	// Moderation configuration
 	Moderation ModerationConfig `json:"moderation" mapstructure:"moderation"`
+
+	// Session configuration
+	Session SessionConfig `json:"session" mapstructure:"session"`
+}
+
+// SessionConfig holds session-related settings.
+type SessionConfig struct {
+	MainKey string `json:"main_key" mapstructure:"main_key"`
+	DmScope string `json:"dm_scope" mapstructure:"dm_scope"` // main, per-peer, per-channel-peer
+	Reset   SessionResetConfig `json:"reset" mapstructure:"reset"`
+}
+
+// SessionResetConfig controls automatic session reset behavior.
+type SessionResetConfig struct {
+	Mode        string `json:"mode" mapstructure:"mode"` // off, daily, idle
+	AtHour      int    `json:"at_hour" mapstructure:"at_hour"`
+	IdleMinutes int    `json:"idle_minutes" mapstructure:"idle_minutes"`
 }
 
 // ModerationConfig holds content moderation settings
@@ -186,10 +203,14 @@ type GatewayConfig struct {
 
 // WebhookConfig holds webhook server configuration
 type WebhookConfig struct {
-	Enabled bool   `json:"enabled" mapstructure:"enabled"`
-	Port    int    `json:"port" mapstructure:"port"`
-	Host    string `json:"host" mapstructure:"host"`
-	Timeout int    `json:"timeout" mapstructure:"timeout"` // seconds
+	Enabled             bool   `json:"enabled" mapstructure:"enabled"`
+	Port                int    `json:"port" mapstructure:"port"`
+	Host                string `json:"host" mapstructure:"host"`
+	Timeout             int    `json:"timeout" mapstructure:"timeout"` // seconds
+	DispatchEnabled     bool   `json:"dispatch_enabled" mapstructure:"dispatch_enabled"`
+	DispatchPath        string `json:"dispatch_path" mapstructure:"dispatch_path"`
+	DispatchSessionKey  string `json:"dispatch_session_key" mapstructure:"dispatch_session_key"`
+	DispatchAgentID     string `json:"dispatch_agent_id" mapstructure:"dispatch_agent_id"`
 }
 
 // AIConfig holds AI provider configuration
@@ -263,10 +284,12 @@ func DefaultConfig() *Config {
 			TickInterval: 30000,
 		},
 		Webhook: WebhookConfig{
-			Enabled: false,
-			Port:    3000,
-			Host:    "0.0.0.0",
-			Timeout: 30,
+			Enabled:         false,
+			Port:            3000,
+			Host:            "0.0.0.0",
+			Timeout:         30,
+			DispatchEnabled: true,
+			DispatchPath:    "/agent",
 		},
 		AI: AIConfig{
 			Profiles: []AIProfile{},
@@ -299,6 +322,15 @@ func DefaultConfig() *Config {
 			Enabled:         false,
 			BlockedKeywords: []string{},
 			BlockedPatterns: []string{},
+		},
+		Session: SessionConfig{
+			MainKey: "main",
+			DmScope: "main",
+			Reset: SessionResetConfig{
+				Mode:        "off",
+				AtHour:      4,
+				IdleMinutes: 0,
+			},
 		},
 	}
 }

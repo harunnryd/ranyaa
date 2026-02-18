@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +22,7 @@ import (
 	"github.com/harun/ranya/pkg/browser"
 	"github.com/harun/ranya/pkg/channels"
 	"github.com/harun/ranya/pkg/commandqueue"
+	"github.com/harun/ranya/pkg/coretools"
 	"github.com/harun/ranya/pkg/cron"
 	"github.com/harun/ranya/pkg/gateway"
 	"github.com/harun/ranya/pkg/hooks"
@@ -27,6 +30,7 @@ import (
 	"github.com/harun/ranya/pkg/moderation"
 	"github.com/harun/ranya/pkg/node"
 	"github.com/harun/ranya/pkg/orchestrator"
+	"github.com/harun/ranya/pkg/pairing"
 	"github.com/harun/ranya/pkg/planner"
 	"github.com/harun/ranya/pkg/plugin"
 	"github.com/harun/ranya/pkg/routing"
@@ -226,6 +230,14 @@ func (d *Daemon) initializeCoreModules() error {
 	d.toolExecutor.SetSandboxManager(toolexecutor.NewSandboxManager(sandboxCfg))
 	d.logger.Info().Msg("Tool executor initialized")
 
+	if err := coretools.RegisterCoreTools(d.toolExecutor, coretools.Options{
+		WorkspaceRoot:  d.config.WorkspacePath,
+		SandboxManager: d.toolExecutor.GetSandboxManager(),
+	}); err != nil {
+		return fmt.Errorf("failed to register core tools: %w", err)
+	}
+	d.logger.Info().Msg("Core tools registered")
+
 	if err := d.memoryMgr.RegisterTools(d.toolExecutor); err != nil {
 		return fmt.Errorf("failed to register memory tools: %w", err)
 	}
@@ -363,6 +375,7 @@ func (d *Daemon) initializeCoreModules() error {
 func (d *Daemon) initializeServices() error {
 	gatewayServer, err := gateway.NewServer(gateway.Config{
 		Port:            d.config.Gateway.Port,
+		Host:            d.config.Gateway.Host,
 		SharedSecret:    d.config.Gateway.SharedSecret,
 		TickInterval:    time.Duration(d.config.Gateway.TickInterval) * time.Millisecond,
 		CommandQueue:    d.queue,
@@ -420,17 +433,26 @@ func (d *Daemon) initializeServices() error {
 	}))
 
 	// Configure Tool Approval Workflow (P0-1)
-	approvalForwarder := gateway.NewApprovalForwarder(d.gatewayServer)
-	// Note: AllowlistManager is nil for now (stateless persistence)
-	approvalHandler := toolexecutor.NewChatApprovalHandler(approvalForwarder, nil)
-	approvalManager := toolexecutor.NewApprovalManager(approvalHandler)
+	var approvalManager *toolexecutor.ApprovalManager
+	if d.config.Tools.ExecApprovals.Enabled {
+		approvalForwarder := gateway.NewApprovalForwarder(d.gatewayServer)
+		allowlist, err := toolexecutor.NewAllowlistManager(d.config.Tools.ExecApprovals.AllowlistPath)
+		if err != nil {
+			return fmt.Errorf("failed to initialize exec approvals allowlist: %w", err)
+		}
+		approvalHandler := toolexecutor.NewChatApprovalHandler(approvalForwarder, allowlist)
+		approvalManager = toolexecutor.NewApprovalManager(approvalHandler)
+		d.logger.Info().Msg("User-in-the-loop tool approval workflow configured")
+	} else {
+		approvalManager = toolexecutor.NewApprovalManager(toolexecutor.AutoApproveHandler{})
+		d.logger.Info().Msg("Tool approvals disabled; auto-approving requests")
+	}
 
 	// Set approval manager on tool executor
 	d.toolExecutor.SetApprovalManager(approvalManager)
 
 	// Register approval RPC methods on gateway
 	d.gatewayServer.RegisterApprovalMethods(approvalManager)
-	d.logger.Info().Msg("User-in-the-loop tool approval workflow configured")
 
 	nodeManager := node.NewNodeManager(node.NodeManagerConfig{
 		NodeConfig: node.NodeConfig{
@@ -446,6 +468,11 @@ func (d *Daemon) initializeServices() error {
 	})
 	d.nodeManager = nodeManager
 	d.logger.Info().Msg("Node manager initialized")
+
+	if err := node.RegisterNodeTools(d.toolExecutor, d.nodeManager); err != nil {
+		return fmt.Errorf("failed to register node tools: %w", err)
+	}
+	d.logger.Info().Msg("Node tools registered")
 
 	routingCfg := routing.DefaultRoutingServiceConfig()
 	if d.config.DataDir != "" {
@@ -483,12 +510,83 @@ func (d *Daemon) initializeServices() error {
 		}
 		d.webhookServer = webhookServer
 		d.logger.Info().Int("port", d.config.Webhook.Port).Msg("Webhook server initialized")
+
+		if d.config.Webhook.DispatchEnabled {
+			path := strings.TrimSpace(d.config.Webhook.DispatchPath)
+			if path == "" {
+				path = "/agent"
+			}
+			agentID := strings.TrimSpace(d.config.Webhook.DispatchAgentID)
+			if agentID == "" {
+				agentID = "default"
+			}
+			sessionKey := strings.TrimSpace(d.config.Webhook.DispatchSessionKey)
+			if sessionKey == "" {
+				sessionKey = "webhook:default"
+			}
+			if err := d.webhookServer.RegisterWebhook(webhook.WebhookConfig{
+				Path:        path,
+				Method:      "POST",
+				Description: "Dispatch webhook payload into agent runtime",
+				Handler: func(params webhook.WebhookParams) (webhook.WebhookResponse, error) {
+					content := extractWebhookContent(params.Body)
+					if content == "" {
+						return webhook.WebhookResponse{Status: 400, Body: map[string]string{"error": "missing prompt"}}, nil
+					}
+					ctx := tracing.NewRequestContext(context.Background())
+					ctx = tracing.WithSessionKey(ctx, sessionKey)
+					result, err := d.channelRegistry.Dispatch(ctx, channels.InboundMessage{
+						Channel:    "webhook",
+						SessionKey: sessionKey,
+						Content:    content,
+						AgentID:    agentID,
+						CWD:        d.config.WorkspacePath,
+						Metadata: map[string]interface{}{
+							"source": "webhook",
+							"path":   path,
+						},
+					})
+					if err != nil {
+						return webhook.WebhookResponse{Status: 500, Body: map[string]string{"error": err.Error()}}, nil
+					}
+					return webhook.WebhookResponse{Status: 200, Body: result}, nil
+				},
+			}); err != nil {
+				return fmt.Errorf("failed to register webhook dispatch route: %w", err)
+			}
+			d.logger.Info().Str("path", path).Msg("Webhook dispatch route registered")
+		}
 	}
 
 	cronService, err := cron.NewService(cron.ServiceOptions{
 		StorePath: d.config.DataDir + "/cron.json",
 		EnqueueSystemEvent: func(text string, agentID string) {
-			d.logger.Info().Str("text", text).Str("agentID", agentID).Msg("Cron system event")
+			sessionKey := strings.TrimSpace(d.config.Session.MainKey)
+			if sessionKey == "" {
+				sessionKey = "main"
+			}
+			ctx := tracing.NewRequestContext(d.ctx)
+			ctx = tracing.WithSessionKey(ctx, sessionKey)
+			ctx = tracing.WithRunID(ctx, tracing.NewRunID())
+			logger := tracing.LoggerFromContext(ctx, d.logger.GetZerolog()).With().
+				Str("session_key", sessionKey).
+				Str("agent_id", agentID).
+				Logger()
+
+			logger.Info().Str("message", text).Msg("Executing cron system event")
+			_, err := d.channelRegistry.Dispatch(ctx, channels.InboundMessage{
+				Channel:    "cron",
+				SessionKey: sessionKey,
+				Content:    text,
+				AgentID:    agentID,
+				CWD:        d.config.WorkspacePath,
+				Metadata: map[string]interface{}{
+					"cron_system_event": true,
+				},
+			})
+			if err != nil {
+				logger.Error().Err(err).Msg("Cron system event dispatch failed")
+			}
 		},
 		RunIsolatedAgentJob: func(job *cron.Job, message string) error {
 			sessionKey := fmt.Sprintf("cron:%s", job.ID)
@@ -551,10 +649,32 @@ func (d *Daemon) initializeServices() error {
 		d.telegramCmd = commands
 		d.telegramBot.SetCommandHandler(commands)
 
+		var pairingManager *pairing.Manager
+		pendingPath := ""
+		allowlistPath := ""
+		if strings.TrimSpace(d.config.DataDir) != "" {
+			pendingPath, allowlistPath = pairing.DefaultPaths(d.config.DataDir, "telegram")
+		}
+		bootstrap := make([]string, 0, len(d.config.Telegram.Allowlist))
+		for _, id := range d.config.Telegram.Allowlist {
+			bootstrap = append(bootstrap, strconv.FormatInt(id, 10))
+		}
+		pairingManager, err = pairing.NewManager(pairing.ManagerOptions{
+			Channel:            "telegram",
+			PendingPath:        pendingPath,
+			AllowlistPath:      allowlistPath,
+			BootstrapAllowlist: bootstrap,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to initialize telegram pairing manager: %w", err)
+		}
+
 		if err := d.registerChannel(newTelegramIngressChannel(
 			bot,
 			commands,
 			d.config.Telegram,
+			d.config.Session,
+			pairingManager,
 			d.subscribeRuntimeEvents,
 			d.clearRuntimeSession,
 			d.logger.GetZerolog(),
@@ -582,6 +702,31 @@ func convertAuthProfiles(profiles []config.AIProfile) []agent.AuthProfile {
 		}
 	}
 	return result
+}
+
+func extractWebhookContent(body interface{}) string {
+	switch typed := body.(type) {
+	case map[string]interface{}:
+		if prompt, ok := typed["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+			return prompt
+		}
+		if msg, ok := typed["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			return msg
+		}
+		if content, ok := typed["content"].(string); ok && strings.TrimSpace(content) != "" {
+			return content
+		}
+		if raw, err := json.Marshal(typed); err == nil {
+			return string(raw)
+		}
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		if raw, err := json.Marshal(typed); err == nil {
+			return string(raw)
+		}
+	}
+	return ""
 }
 
 // registerPluginTools registers all plugin tools with the tool executor
