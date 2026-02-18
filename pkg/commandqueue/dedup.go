@@ -19,6 +19,7 @@ type dedupCache struct {
 	mu      sync.RWMutex
 	ctx     context.Context
 	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
 // newDedupCache creates a new deduplication cache
@@ -33,6 +34,7 @@ func newDedupCache(ctx context.Context, ttl time.Duration) *dedupCache {
 		ttl:     ttl,
 		ctx:     ctx,
 		cancel:  cancel,
+		done:    make(chan struct{}),
 	}
 
 	// Start cleanup goroutine
@@ -78,6 +80,7 @@ func (dc *dedupCache) Set(requestID string, result taskResult) {
 
 // cleanup periodically removes expired entries
 func (dc *dedupCache) cleanup() {
+	defer close(dc.done)
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 

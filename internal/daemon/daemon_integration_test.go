@@ -701,17 +701,13 @@ func TestIntegrationGatewayReasoningStreamEvents(t *testing.T) {
 
 	var events []gateway.EventMessage
 	deadline := time.Now().Add(4 * time.Second)
+	_ = wsConn.SetReadDeadline(deadline)
 	for time.Now().Before(deadline) {
 		var evt gateway.EventMessage
-		_ = wsConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 		err := wsConn.ReadJSON(&evt)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				if hasTypedEvent(events, gateway.StreamTypeReasoning, "output") &&
-					hasTypedEvent(events, gateway.StreamTypeAssistant, "output") {
-					break
-				}
-				continue
+				break
 			}
 			require.NoError(t, err)
 		}
