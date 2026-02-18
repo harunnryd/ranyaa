@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -24,6 +25,7 @@ type TelegramApprovalHandler struct {
 	// Pending approvals
 	mu               sync.RWMutex
 	pendingApprovals map[string]chan ApprovalResponse
+	counter          uint64
 }
 
 // NewTelegramApprovalHandler creates a new Telegram approval handler
@@ -42,7 +44,7 @@ func (t *TelegramApprovalHandler) RequestApproval(ctx context.Context, req Appro
 	}
 
 	// Generate unique callback ID
-	callbackID := fmt.Sprintf("approval_%d", time.Now().UnixNano())
+	callbackID := t.nextCallbackID()
 
 	// Create approval message
 	text := t.formatApprovalMessage(req)
@@ -101,6 +103,11 @@ func (t *TelegramApprovalHandler) RequestApproval(ctx context.Context, req Appro
 			Reason:   "timeout",
 		}, ctx.Err()
 	}
+}
+
+func (t *TelegramApprovalHandler) nextCallbackID() string {
+	seq := atomic.AddUint64(&t.counter, 1)
+	return fmt.Sprintf("approval_%d_%d", time.Now().UnixNano(), seq)
 }
 
 // HandleCallback handles callback queries from inline buttons

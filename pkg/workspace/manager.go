@@ -431,6 +431,18 @@ func (m *WorkspaceManager) handleFileChanged(path string) error {
 	// Update cache
 	m.cache.Set(path, file)
 
+	if !hadFile {
+		// Treat change events for previously unseen files as adds.
+		m.emitter.EmitFileAdded(file)
+
+		// Call reload callback if critical file
+		if file.IsCritical && m.config.OnReload != nil {
+			m.config.OnReload(file)
+		}
+
+		return nil
+	}
+
 	// Emit event
 	m.emitter.EmitFileChanged(file, hasChanges)
 

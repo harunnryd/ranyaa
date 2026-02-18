@@ -782,6 +782,7 @@ func (s *Server) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 			writeSSEEvent(w, flusher, "error", map[string]interface{}{"error": err.Error()})
 			return
 		case result := <-resultCh:
+			drainRuntimeEvents(events, w, flusher)
 			writeSSEEvent(w, flusher, "complete", result)
 			return
 		}
@@ -834,6 +835,24 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, name string, pay
 	}
 	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, string(data))
 	flusher.Flush()
+}
+
+func drainRuntimeEvents(events <-chan agent.RuntimeEvent, w http.ResponseWriter, flusher http.Flusher) {
+	for {
+		select {
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			eventName, payload := runtimeEventToSSE(evt)
+			if eventName == "" {
+				continue
+			}
+			writeSSEEvent(w, flusher, eventName, payload)
+		default:
+			return
+		}
+	}
 }
 
 // GetConnectedClients returns information about all connected clients

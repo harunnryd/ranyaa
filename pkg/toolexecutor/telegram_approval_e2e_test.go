@@ -192,7 +192,22 @@ func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 		}
 
 		// Wait for all requests to be registered
-		time.Sleep(200 * time.Millisecond)
+		deadline := time.After(2 * time.Second)
+		for {
+			handler.mu.RLock()
+			pendingCount := len(handler.pendingApprovals)
+			handler.mu.RUnlock()
+
+			if pendingCount == numRequests {
+				break
+			}
+
+			select {
+			case <-deadline:
+				t.Fatalf("expected %d pending approvals, got %d", numRequests, pendingCount)
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
 
 		// Approve all pending requests
 		handler.mu.RLock()
@@ -222,7 +237,7 @@ func TestTelegramApprovalHandler_E2E_CompleteWorkflow(t *testing.T) {
 				assert.True(t, approved)
 			case err := <-errors:
 				t.Fatalf("approval %d failed: %v", i, err)
-			case <-time.After(2 * time.Second):
+			case <-time.After(3 * time.Second):
 				t.Fatalf("approval %d timed out", i)
 			}
 		}

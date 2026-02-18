@@ -75,8 +75,10 @@ func (am *ApprovalManager) RequestApproval(ctx context.Context, req ApprovalRequ
 	// Request approval
 	responseChan := make(chan ApprovalResponse, 1)
 	errorChan := make(chan error, 1)
+	done := make(chan struct{})
 
 	go func() {
+		defer close(done)
 		response, err := am.handler.RequestApproval(timeoutCtx, req)
 		if err != nil {
 			errorChan <- err
@@ -109,6 +111,11 @@ func (am *ApprovalManager) RequestApproval(ctx context.Context, req ApprovalRequ
 		return false, fmt.Errorf("approval request failed: %w", err)
 
 	case <-timeoutCtx.Done():
+		// Give the handler a chance to observe cancellation and flush output.
+		select {
+		case <-done:
+		case <-time.After(200 * time.Millisecond):
+		}
 		log.Warn().
 			Str("command", req.Command).
 			Dur("timeout", timeout).
